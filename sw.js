@@ -19,6 +19,7 @@ const STATIC_ASSETS = [
   '/js/storage.js',
   '/js/api-client.js',
   '/js/toast.js',
+  '/js/db.js',
   '/static/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png'

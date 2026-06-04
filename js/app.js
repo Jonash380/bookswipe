@@ -19,7 +19,7 @@ import {
   getUIState, setUIState,
   getFullWatchlist
 } from './storage.js';
-import { fetchDeduped, createAbortable, getErrorMessage } from './api-client.js';
+import { createAbortable, getErrorMessage } from './api-client.js';
 import { showToast, dismissToast, clearAllToasts } from './toast.js';
 
 // ===== CONSTANTS =====
@@ -166,12 +166,14 @@ class App {
     this.tr = LANG[this.lang] || LANG.de;
     this._cleanupFns = [];
     this._pendingAbort = null;
-    this._loadState();
     this._loadDNAFromURL();
     this._bindKeyboard();
     document.documentElement.lang = this.lang;
-    // Migrate legacy data then render
-    migrateFromLocalStorage().then(() => this.render());
+    // Migrate legacy data, load state, then render
+    migrateFromLocalStorage()
+      .then(() => this._loadState())
+      .then(() => this.render())
+      .catch(() => this.render());
   }
 
   // ===== STATE PERSISTENCE =====
@@ -358,8 +360,8 @@ class App {
           ${modes.map(m => `
             <button class="watch-mode-card ${this.state.watchMode === m.key ? 'selected' : ''}" data-mode="${m.key}">
               <span class="watch-mode-icon">${m.icon}</span>
-              <span class="watch-mode-label">${this.t[m.key]}</span>
-              <span class="watch-mode-sub">${this.t[m.key + 'Sub']}</span>
+              <span class="watch-mode-label">${this.tr[m.key]}</span>
+              <span class="watch-mode-sub">${this.tr[m.key + 'Sub']}</span>
             </button>
           `).join('')}
         </div>
@@ -743,7 +745,7 @@ class App {
     const type = this.state.mediaType === 'movies' ? 'movie' : 'tv';
     const genreIds = this.state.selectedGenres.map(g => typeof g === 'string' ? g : g.id).join(',');
     try {
-      const r = await fetch(`/proxy/discover/${type}?sort_by=popularity.desc&with_genres=${genreIds || ''}&language=${this.lang}`);
+      const r = await fetch(`/proxy/tmdb/discover/${type}?sort_by=popularity.desc&with_genres=${genreIds || ''}&language=${this.lang}`);
       if (!r.ok) return [];
       const data = await r.json();
       return (data.results || []).map(m => ({

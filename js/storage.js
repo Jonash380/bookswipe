@@ -45,27 +45,27 @@ export async function migrateFromLocalStorage() {
       const tx = db.transaction('watchlist', 'readwrite');
       const store = tx.objectStore('watchlist');
       watchlist.forEach(item => store.put(item));
-      await tx.complete;
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
     }
     if (disliked.length) {
       const db = await getDB();
       const tx = db.transaction('disliked', 'readwrite');
       const store = tx.objectStore('disliked');
       disliked.forEach(item => store.put(item));
-      await tx.complete;
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
     }
     if (history.length) {
       const db = await getDB();
       const tx = db.transaction('history', 'readwrite');
       const store = tx.objectStore('history');
       history.forEach((item, i) => store.put({ ...item, _hid: `h-${item.date}-${i}` }));
-      await tx.complete;
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
     }
     if (profile) {
       const db = await getDB();
       const tx = db.transaction('recProfile', 'readwrite');
       tx.objectStore('recProfile').put(profile, 'main');
-      await tx.complete;
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
     }
 
     localStorage.setItem('bs-migrated-v3', '1');
@@ -162,7 +162,15 @@ export async function getRecProfile() {
 }
 
 export async function saveRecProfile(profile) {
-  return putItem('recProfile', { ...profile, _key: 'main' });
+  try {
+    const db = await getDB();
+    const tx = db.transaction('recProfile', 'readwrite');
+    tx.objectStore('recProfile').put(profile, 'main');
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('[Storage] saveRecProfile failed:', e); }
 }
 
 /** Legacy localStorage helpers for small UI state only */

@@ -224,7 +224,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length > 10000:
             return self._json({'error': 'Body too large', 'status': 400}, 400)
-        body = self.rfile.read(content_length).decode('utf-8')
+        body = self.rfile.read(content_length).decode('utf-8', errors='replace')
         if not body or not _IGDB_BODY_RE.match(body.strip()):
             return self._json({'error': 'Invalid IGDB query', 'status': 400}, 400)
         return self._do_igdb_request(body, token)

@@ -238,7 +238,7 @@ body.super-like-flash{animation:superLikeFlash 0.3s ease-out}
 .genre-bars{display:flex;flex-direction:column;gap:6px}
 .genre-bar{display:flex;align-items:center;gap:8px;font-size:.85rem}
 .genre-bar span:first-child{min-width:80px;text-align:right;color:var(--fg2)}
-.genre-bar span:last-child{min-width:24px;color:var(--fg2}}
+.genre-bar span:last-child{min-width:24px;color:var(--fg2)}
 .bar-fill{height:8px;background:var(--accent);border-radius:4px;flex:1;transition:width .6s cubic-bezier(0.34,1.56,0.64,1)}
 
 /* Vibe bars */

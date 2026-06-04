@@ -3,3 +3,4 @@ __pycache__/
 server.log
 *.zip
 .DS_Store
+sync.log
