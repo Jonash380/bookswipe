@@ -27,7 +27,7 @@ export class Recommender {
     safeSetJSON('bs-rec-profile', this.profile);
   }
 
-  async score(item) {
+  score(item) {
     if (this.cache.has(item.id)) return this.cache.get(item.id);
     let score = 50;
     const s = this.app.state;

@@ -68,19 +68,33 @@ function _mapGame(g) {
   };
 }
 
-export async function searchGames(query, limit = 20) {
-  if (!query || !query.trim()) return [];
-  const encoded = encodeURIComponent(`search "${query.replace(/"/g, '\\"')}"; fields ${IGDB_FIELDS}; limit ${limit};`);
+/** POST-based IGDB proxy (avoids URL length limits) */
+async function _igdbFetch(body) {
   try {
-    const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
+    const r = await fetch('/proxy/igdb/games', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body,
+    });
     if (!r.ok) return [];
     const data = await r.json();
-    if (Array.isArray(data)) return data.map(_mapGame);
+    if (Array.isArray(data)) return data;
+    if (data.error) {
+      console.warn('IGDB API error:', data.error);
+      return [];
+    }
     return [];
   } catch (e) {
-    console.warn('searchGames error', e);
+    console.warn('IGDB fetch error:', e);
     return [];
   }
+}
+
+export async function searchGames(query, limit = 20) {
+  if (!query || !query.trim()) return [];
+  const body = `search "${query.replace(/"/g, '\\"')}"; fields ${IGDB_FIELDS}; limit ${limit};`;
+  const data = await _igdbFetch(body);
+  return data.map(_mapGame);
 }
 
 export async function fetchGamesByGenre(genreIds = [], limit = 20) {
@@ -88,47 +102,21 @@ export async function fetchGamesByGenre(genreIds = [], limit = 20) {
     ? `where genres = [${genreIds.join(',')}]`
     : '';
   const body = `fields ${IGDB_FIELDS}; ${whereClause}; sort total_rating_count desc; limit ${limit};`;
-  const encoded = encodeURIComponent(body);
-  try {
-    const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
-    if (!r.ok) return [];
-    const data = await r.json();
-    if (Array.isArray(data)) return data.map(_mapGame);
-    return [];
-  } catch (e) {
-    console.warn('fetchGamesByGenre error', e);
-    return [];
-  }
+  const data = await _igdbFetch(body);
+  return data.map(_mapGame);
 }
 
 export async function fetchPopularGames(limit = 30) {
   const body = `fields ${IGDB_FIELDS}; where total_rating_count >= 50; sort total_rating_count desc; limit ${limit};`;
-  const encoded = encodeURIComponent(body);
-  try {
-    const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
-    if (!r.ok) return [];
-    const data = await r.json();
-    if (Array.isArray(data)) return data.map(_mapGame);
-    return [];
-  } catch (e) {
-    console.warn('fetchPopularGames error', e);
-    return [];
-  }
+  const data = await _igdbFetch(body);
+  return data.map(_mapGame);
 }
 
 export async function fetchGameById(igdbId) {
   const body = `fields ${IGDB_FIELDS}; where id = ${igdbId};`;
-  const encoded = encodeURIComponent(body);
-  try {
-    const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
-    if (!r.ok) return null;
-    const data = await r.json();
-    if (Array.isArray(data) && data.length > 0) return _mapGame(data[0]);
-    return null;
-  } catch (e) {
-    console.warn('fetchGameById error', e);
-    return null;
-  }
+  const data = await _igdbFetch(body);
+  if (data.length > 0) return _mapGame(data[0]);
+  return null;
 }
 
 export async function fetchGamesForDiscovery(genreIds = [], platformIds = [], limit = 40) {
@@ -136,15 +124,6 @@ export async function fetchGamesForDiscovery(genreIds = [], platformIds = [], li
   if (genreIds.length) conditions.push(`genres = [${genreIds.join(',')}]`);
   if (platformIds.length) conditions.push(`platforms = [${platformIds.join(',')}]`);
   const body = `fields ${IGDB_FIELDS}; where ${conditions.join(' & ')}; sort total_rating desc; limit ${limit};`;
-  const encoded = encodeURIComponent(body);
-  try {
-    const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
-    if (!r.ok) return [];
-    const data = await r.json();
-    if (Array.isArray(data)) return data.map(_mapGame);
-    return [];
-  } catch (e) {
-    console.warn('fetchGamesForDiscovery error', e);
-    return [];
-  }
+  const data = await _igdbFetch(body);
+  return data.map(_mapGame);
 }

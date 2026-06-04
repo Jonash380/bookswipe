@@ -1,4 +1,4 @@
-import { escapeHTML, safeGetJSON, safeSetJSON, trimLocalStorage, shuffleArray, TMDB_GENRE_MAP } from './utils.js';
+import { escapeHTML, shuffleArray, TMDB_GENRE_MAP } from './utils.js';
 import { BOOK_GENRES, BOOK_MOODS, BOOK_QUIZ, ERA_FILTERS, BOOK_SEARCH, COVER_PLACEHOLDERS } from './books.js';
 import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
@@ -8,33 +8,53 @@ import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
 import { getTMDBDetails, searchTMDB } from './tmdb.js';
 import { renderVibeBars, detectSpoilers, generateElevatorPitchFull } from './descriptions.js';
-import { mapTMDBTags, computeVibeScores } from './tag_mapper.js';
+import { mapTMDBTags, computeVibeScores, mapGameTags, mapMediaDNA } from './tag_mapper.js';
 import { searchGames, fetchGamesByGenre, fetchPopularGames, fetchGamesForDiscovery } from './games_api.js';
+import {
+  migrateFromLocalStorage,
+  getWatchlist, addToWatchlist, removeFromWatchlist,
+  getDisliked, addToDisliked, removeFromDisliked,
+  getHistory, addToHistory, removeLastHistory,
+  getRecProfile, saveRecProfile,
+  getUIState, setUIState,
+  getFullWatchlist
+} from './storage.js';
+import { fetchDeduped, createAbortable, getErrorMessage } from './api-client.js';
+import { showToast, dismissToast, clearAllToasts } from './toast.js';
 
+// ===== CONSTANTS =====
 const LANG = {
   de: {
-    title:'BookSwipe', subtitle:'Bücher, Filme & Spiele entdecken', skip:'Überspringen', like:'Gefällt mir',
-    nope:'Nichts für mich', discover:'Entdecken', onboarding:'Willkommen!', quiz:'Quiz', swipe:'Wischen',
+    title:'BookSwipe', subtitle:'Buecher, Filme & Spiele entdecken', skip:'Ueberspringen', like:'Gefaellt mir',
+    nope:'Nichts fuer mich', discover:'Entdecken', onboarding:'Willkommen!', quiz:'Quiz', swipe:'Wischen',
     history:'Verlauf', watchlist:'Merkliste', stats:'Statistiken', empty:'Nichts gefunden', loading:'Laden...',
     age:'Alter', lang:'Sprache', dark:'Dunkel', light:'Hell', yes:'Ja', no:'Nein', export:'Exportieren',
     share:'Teilen', whoWatching:'Wer schaut zu?', solo:'Allein', dateNight:'Date Night', family:'Familie',
-    blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Damit wir dir besser empfehlen können',
+    blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Damit wir dir besser empfehlen koennen',
     familySub:'Wir filtern Inhalte automatisch', dateNightSub:'Wir boosten Romance & Thriller',
-    soloSub:'Volle Kontrolle über deine Empfehlungen',
-    persona:'Dein Taste-Persona', antiTaste:'Was du hasst', antiTasteSub:'Wir haben es aus deinem Weg geräumt',
-    weeklyVibe:'Dein Wochen-Vibe', pickForUs:'Überrasch mich!', dnaLink:'Taste DNA teilen',
+    soloSub:'Volle Kontrolle ueber deine Empfehlungen',
+    persona:'Dein Taste-Persona', antiTaste:'Was du hasst', antiTasteSub:'Wir haben es aus deinem Weg geraeumt',
+    weeklyVibe:'Dein Wochen-Vibe', pickForUs:'Ueberrasch mich!', dnaLink:'Taste DNA teilen',
     playOn:'Auf {0} ansehen', whySeeing:'Warum sehe ich das?', matchReason:'Passt zu deinen Vorlieben',
     swipeLeft:'Links geswiped', swipeRight:'Rechts geswiped', bannedContent:'Verbannt',
     rapidFireTitle:'Dein Geschmack in 15 Sekunden', rapidFireSub:'Wische schnell durch — links = Nein, rechts = Ja',
     rapidFireComplete:'Perfekt! Wir kennen deinen Geschmack', letterboxd:'Letterboxd Export',
     letterboxdSub:'Importiere deine Merkliste nach Letterboxd',
-    couchCoop:'Couch Co-op Roulette', couchCoopSub:'Für wenn ihr euch nicht einigen könnt',
+    couchCoop:'Couch Co-op Roulette', couchCoopSub:'Fuer wenn ihr euch nicht einigen koennt',
     spin:'Drehen!', result:'Das wird es!',
     games:'Spiele', whatToPlay:'Was soll ich spielen?', platforms:'Plattformen',
     playstyle:'Spielstil', timeAvailable:'Zeit', sessions:'Sitzungen',
     quickSession:'Kurz (15-30 Min)', moderateSession:'Mittel (1-2 Std)', longSession:'Lang (3+ Std)',
     playing:'Gerade gespielt', completed:'Geschafft', backlog:'Backlog', wishlist:'Wunschliste', dropped:'Abgebrochen',
-    hoursPlayed:'Std. gespielt', onSale:'Im Angebot', friendsPlaying:'Freunde spielen'
+    hoursPlayed:'Std. gespielt', onSale:'Im Angebot', friendsPlaying:'Freunde spielen',
+    // New translations
+    errorLoading:'Fehler beim Laden', retry:'Erneut versuchen', errorDetails:'Details',
+    cardCount:'{0} Karten', undo:'Rueckgaengig', undoMessage:'{0} wurde entfernt',
+    becauseYouLiked:'Weil dir "{0}" gefaellt', swipeActionLike:'Geswiped', swipeActionNope:'Uebersprungen',
+    swipeActionSkip:'Uebergangen', notForMe:'Nicht fuer mich', seenIt:'Bereits gesehen',
+    wrongMood:'Falscher Stimmung', notMyGenre:'Nicht mein Genre', otherReason:'Anderer Grund',
+    feedbackTitle:'Warum interessiert dich das nicht?', fromWatchlist:'Aus Merkliste entfernt',
+    crossMediaTitle:'Auch fuer dich', noDescription:'Keine Beschreibung verfuegbar'
   },
   en: {
     title:'BookSwipe', subtitle:'Discover books, movies & games', skip:'Skip', like:'Like',
@@ -47,7 +67,7 @@ const LANG = {
     soloSub:'Full control over your picks',
     persona:'Your Taste Persona', antiTaste:'What you hate', antiTasteSub:'We banished it from your feed',
     weeklyVibe:'Your Weekly Vibe', pickForUs:'Pick for Us!', dnaLink:'Share Taste DNA',
-    playOn:'▶ Play on {0}', whySeeing:'Why am I seeing this?', matchReason:'Matches your preferences',
+    playOn:'Play on {0}', whySeeing:'Why am I seeing this?', matchReason:'Matches your preferences',
     swipeLeft:'Swiped left', swipeRight:'Swiped right', bannedContent:'Banished',
     rapidFireTitle:'Your Taste in 15 Seconds', rapidFireSub:'Swipe fast — left = no, right = yes',
     rapidFireComplete:'Perfect! We know your taste', letterboxd:'Letterboxd Export',
@@ -58,7 +78,15 @@ const LANG = {
     playstyle:'Playstyle', timeAvailable:'Time', sessions:'Sessions',
     quickSession:'Quick (15-30 min)', moderateSession:'Moderate (1-2 hrs)', longSession:'Long (3+ hrs)',
     playing:'Currently Playing', completed:'Completed', backlog:'Backlog', wishlist:'Wishlist', dropped:'Dropped',
-    hoursPlayed:'hrs played', onSale:'On Sale', friendsPlaying:'Friends playing'
+    hoursPlayed:'hrs played', onSale:'On Sale', friendsPlaying:'Friends playing',
+    // New translations
+    errorLoading:'Error loading content', retry:'Try again', errorDetails:'Details',
+    cardCount:'{0} cards', undo:'Undo', undoMessage:'{0} removed',
+    becauseYouLiked:'Because you liked "{0}"', swipeActionLike:'Liked', swipeActionNope:'Passed',
+    swipeActionSkip:'Skipped', notForMe:'Not for me', seenIt:'Already seen it',
+    wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other reason',
+    feedbackTitle:'Why are you not interested?', fromWatchlist:'Removed from watchlist',
+    crossMediaTitle:'You might also like', noDescription:'No description available'
   }
 };
 
@@ -70,7 +98,7 @@ const WATCH_MODES = {
 
 const PERSONA_BADGES = {
   de: {
-    a24Disciple: 'A24 Jünger', horrorSkeptic: 'Horror-Skeptiker', romcomAddict: 'RomCom-Süchtiger',
+    a24Disciple: 'A24 Juenger', horrorSkeptic: 'Horror-Skeptiker', romcomAddict: 'RomCom-Suechtiger',
     nostalgiaAddict: '90er Nostalgie-Addict', foreignFilmAficionado: 'Foreign Film Kenner',
     cerebrlElite: 'Cerebrale Elite', cozyQueen: 'Cozy Queen', actionJunkie: 'Action Junkie',
     mindBender: 'Mind Bender', normie: 'Normie', wildcard: 'Wildcard',
@@ -95,19 +123,41 @@ const STREAMING_PROVIDERS = {
   337: { name:'Disney', color:'#113CCF', icon:'D', deepLink:'disneyplus://' }
 };
 
+// Cross-media genre mapping: if you like X in movies, try Y in games
+const CROSS_MEDIA_GENRES = {
+  movies: {
+    games: { 28: [2,24], 878: [12,31], 27: [], 10749: [], 14: [12], 35: [], 16: [], 18: [12,31] },
+    books: { 28: [], 878: [], 27: [], 10749: [], 14: [], 35: [], 16: [], 18: [] }
+  },
+  tv: {
+    games: { 10765: [12,31], 18: [12,31], 35: [], 16: [], 9648: [] },
+    books: { 10765: [], 18: [], 35: [], 16: [], 9648: [] }
+  },
+  games: {
+    movies: { 'Action': [28], 'RPG': [14,878], 'Adventure': [12,28], 'Puzzle': [], 'Strategy': [], 'Horror': [27] },
+    books: { 'RPG': ['fantasy'], 'Adventure': ['adventure'], 'Puzzle': ['mystery'], 'Strategy': ['historical'] }
+  },
+  books: {
+    movies: { 'fantasy': [14], 'scifi': [878], 'thriller': [53], 'romance': [10749], 'horror': [27] },
+    games: { 'fantasy': [12], 'scifi': [12,31], 'thriller': [], 'romance': [], 'horror': [] }
+  }
+};
+
+// ===== MAIN APP CLASS =====
 class App {
   constructor() {
-    this.lang = safeGetJSON('bs-lang', 'de');
-    this.state = safeGetJSON('bs-state', {
+    this.lang = 'de';
+    this.state = {
       selectedGenres: [], selectedMoods: [], mediaType: 'movies',
       eraFilter: 'all', activeAesthetic: null, activeMood: null,
       pacingFilter: false, throwbackActive: false, selectedEras: [],
       hasCompletedOnboarding: false, hasCompletedQuiz: false,
-      watchMode: 'solo', onboardingStep: 0, blindDateMode: false
-    });
-    this.watchlist = safeGetJSON('bs-watchlist', []);
-    this.disliked = safeGetJSON('bs-disliked', []);
-    this.history = safeGetJSON('bs-history', []);
+      watchMode: 'solo', onboardingStep: 0, blindDateMode: false,
+      blockedGenres: [], boostedMoods: [], selectedPlatforms: []
+    };
+    this.watchlist = [];
+    this.disliked = [];
+    this.history = [];
     this.currentCards = [];
     this.currentCardIndex = 0;
     this.swipeEngine = null;
@@ -115,19 +165,33 @@ class App {
     this.recommender = new Recommender(this);
     this.tr = LANG[this.lang] || LANG.de;
     this._cleanupFns = [];
+    this._pendingAbort = null;
+    this._loadState();
     this._loadDNAFromURL();
     this._bindKeyboard();
-    this._showKeyboardHints();
     document.documentElement.lang = this.lang;
-    this.render();
+    // Migrate legacy data then render
+    migrateFromLocalStorage().then(() => this.render());
   }
 
-  save() {
-    safeSetJSON('bs-lang', this.lang);
-    safeSetJSON('bs-state', this.state);
-    safeSetJSON('bs-watchlist', this.watchlist);
-    safeSetJSON('bs-disliked', this.disliked);
-    safeSetJSON('bs-history', this.history);
+  // ===== STATE PERSISTENCE =====
+  async _loadState() {
+    const { lang, state } = getUIState();
+    if (lang) this.lang = lang;
+    if (state) {
+      this.state = { ...this.state, ...state };
+    }
+    this.tr = LANG[this.lang] || LANG.de;
+    this.watchlist = await getWatchlist();
+    this.disliked = await getDisliked();
+    this.history = await getHistory();
+    const profile = await getRecProfile();
+    if (profile) this.recommender.profile = profile;
+  }
+
+  async save() {
+    setUIState(this.lang, this.state);
+    await saveRecProfile(this.recommender.profile);
   }
 
   t(k, ...args) {
@@ -136,6 +200,7 @@ class App {
     return v;
   }
 
+  // ===== RENDERING =====
   render() {
     const app = document.getElementById('app');
     if (!this.state.hasCompletedOnboarding) return this.renderOnboarding(app);
@@ -156,6 +221,7 @@ class App {
     }
   }
 
+  // ===== KEYBOARD =====
   _bindKeyboard() {
     this._keyHandler = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -192,24 +258,41 @@ class App {
           this._openCurrentCardInfo();
           break;
       }
-      this._flashKeyHints();
     };
     document.addEventListener('keydown', this._keyHandler);
   }
 
-  _undoSwipe() {
-    if (!this.history.length) return;
-    const last = this.history.pop();
+  async _undoSwipe() {
+    const last = await removeLastHistory();
+    if (!last) {
+      showToast(this.lang === 'de' ? 'Nichts zum Rueckgaengig machen' : 'Nothing to undo', { type: 'warning', duration: 2000 });
+      return;
+    }
     if (last.action === 'like') {
+      await removeFromWatchlist(last.id);
       this.watchlist = this.watchlist.filter(w => w.id !== last.id);
     } else if (last.action === 'nope') {
+      await removeFromDisliked(last.id);
       this.disliked = this.disliked.filter(d => d.id !== last.id);
     }
     this.currentCards.splice(this.currentCardIndex, 0, last);
-    this.currentCardIndex = Math.max(0, this.currentCardIndex - 1);
-    this.save();
     const app = document.getElementById('app');
     this.renderCards(app);
+    showToast(this.t('undoMessage', last.title), {
+      type: 'info',
+      duration: 3000,
+      action: true,
+      actionLabel: this.t('undo'),
+      onAction: () => this._redoSwipe(last)
+    });
+  }
+
+  _redoSwipe(item) {
+    const idx = this.currentCards.findIndex(c => c.id === item.id);
+    if (idx >= 0) {
+      this.currentCards.splice(idx, 1);
+      this.handleSwipe(item.action === 'like' ? 'right' : item.action === 'nope' ? 'left' : 'up');
+    }
   }
 
   _openCurrentCardInfo() {
@@ -219,30 +302,7 @@ class App {
     this._showCardModal(card, app);
   }
 
-  _showKeyboardHints() {
-    if (this._hintsEl) this._hintsEl.remove();
-    const hints = document.createElement('div');
-    hints.className = 'keyboard-hints';
-    hints.innerHTML = `
-      <span class="key-hint"><kbd>←</kbd> Pass</span>
-      <span class="key-hint"><kbd>→</kbd> Like</span>
-      <span class="key-hint"><kbd>↑</kbd> Super</span>
-      <span class="key-hint"><kbd>I</kbd> Info</span>
-      <span class="key-hint"><kbd>Z</kbd> Undo</span>`;
-    document.body.appendChild(hints);
-    setTimeout(() => hints.classList.add('visible'), 500);
-    setTimeout(() => { hints.classList.remove('visible'); setTimeout(() => hints.remove(), 500); }, 4000);
-    this._hintsEl = hints;
-  }
-
-  _flashKeyHints() {
-    if (this._hintsEl) {
-      this._hintsEl.classList.add('visible');
-      clearTimeout(this._hintsTimer);
-      this._hintsTimer = setTimeout(() => this._hintsEl.classList.remove('visible'), 2000);
-    }
-  }
-
+  // ===== ONBOARDING =====
   renderOnboarding(app) {
     const step = this.state.onboardingStep || 0;
     if (step === 0) return this._renderWelcomeScreen(app);
@@ -262,7 +322,7 @@ class App {
         <h1>${this.tr.title}</h1>
         <p>${this.tr.subtitle}</p>
         <div class="media-toggle">
-          <button class="btn ${this.state.mediaType === 'books' ? 'active' : ''}" data-type="books">📚 ${this.lang === 'de' ? 'Bücher' : 'Books'}</button>
+          <button class="btn ${this.state.mediaType === 'books' ? 'active' : ''}" data-type="books">📚 ${this.lang === 'de' ? 'Buecher' : 'Books'}</button>
           <button class="btn ${this.state.mediaType === 'movies' ? 'active' : ''}" data-type="movies">🎬 ${this.lang === 'de' ? 'Filme' : 'Movies'}</button>
           <button class="btn ${this.state.mediaType === 'tv' ? 'active' : ''}" data-type="tv">📺 TV</button>
           <button class="btn ${this.state.mediaType === 'games' ? 'active' : ''}" data-type="games">🎮 ${this.lang === 'de' ? 'Spiele' : 'Games'}</button>
@@ -277,8 +337,8 @@ class App {
     app.querySelector('[data-type="movies"]')?.addEventListener('click', () => { this.state.mediaType = 'movies'; this.render(); });
     app.querySelector('[data-type="tv"]')?.addEventListener('click', () => { this.state.mediaType = 'tv'; this.render(); });
     app.querySelector('[data-type="games"]')?.addEventListener('click', () => { this.state.mediaType = 'games'; this.render(); });
-    app.querySelector('[data-lang="de"]')?.addEventListener('click', () => { this.lang = 'de'; this.t = LANG.de; this.save(); this.render(); });
-    app.querySelector('[data-lang="en"]')?.addEventListener('click', () => { this.lang = 'en'; this.t = LANG.en; this.save(); this.render(); });
+    app.querySelector('[data-lang="de"]')?.addEventListener('click', () => { this.lang = 'de'; this.tr = LANG.de; this.save(); this.render(); });
+    app.querySelector('[data-lang="en"]')?.addEventListener('click', () => { this.lang = 'en'; this.tr = LANG.en; this.save(); this.render(); });
     app.querySelector('.btn-start')?.addEventListener('click', () => {
       this.state.onboardingStep = 1; this.save(); this.render();
     });
@@ -323,8 +383,7 @@ class App {
   _applyWatchModeFilters() {
     const mode = WATCH_MODES[this.state.watchMode] || WATCH_MODES.solo;
     if (mode.hardBlock.length && this.state.mediaType !== 'books') {
-      const blockedNames = mode.hardBlock;
-      this.state.blockedGenres = blockedNames;
+      this.state.blockedGenres = mode.hardBlock;
     }
     if (mode.boost.length && this.state.mediaType !== 'books') {
       this.state.boostedMoods = mode.boost;
@@ -337,7 +396,7 @@ class App {
     app.innerHTML = `
       <div class="onboarding who-watching">
         <h1>${this.tr.platforms}</h1>
-        <p class="onboarding-sub">${this.lang === 'de' ? 'Wähle deine Plattformen' : 'Select your platforms'}</p>
+        <p class="onboarding-sub">${this.lang === 'de' ? 'Waehle deine Plattformen' : 'Select your platforms'}</p>
         <div class="platform-grid">
           ${platforms.map(p => `
             <button class="platform-card ${this.state.selectedPlatforms.includes(p.id) ? 'selected' : ''}" data-pid="${p.id}">
@@ -440,7 +499,7 @@ class App {
         { id:'rf-b4', title:'Die unendliche Geschichte', year:1979, cover:'', genres:['fantasy'], author:'Michael Ende', source:'rapid-fire', type:'book' },
         { id:'rf-b5', title:'Der Steppenwolf', year:1927, cover:'', genres:['historical'], author:'Hermann Hesse', source:'rapid-fire', type:'book' },
         { id:'rf-b6', title:'Tschick', year:2010, cover:'', genres:['ya'], author:'Wolfgang Herrndorf', source:'rapid-fire', type:'book' },
-        { id:'rf-b7', title:'Das Parfum', year:1985, cover:'', genres:['thriller'], author:'Patrick Süskind', source:'rapid-fire', type:'book' },
+        { id:'rf-b7', title:'Das Parfum', year:1985, cover:'', genres:['thriller'], author:'Patrick Sue/skind', source:'rapid-fire', type:'book' },
         { id:'rf-b8', title:'Fahrenheit 451', year:1953, cover:'', genres:['scifi'], author:'Ray Bradbury', source:'rapid-fire', type:'book' },
         { id:'rf-b9', title:'Die Vermessung der Welt', year:2005, cover:'', genres:['historical'], author:'Daniel Kehlmann', source:'rapid-fire', type:'book' },
         { id:'rf-b10', title:'Eragon', year:2003, cover:'', genres:['fantasy'], author:'Christopher Paolini', source:'rapid-fire', type:'book' }
@@ -466,6 +525,7 @@ class App {
     this._rapidFireLikes.forEach(item => {
       if (!this.watchlist.find(w => w.id === item.id)) {
         this.watchlist.push({ ...item, source: 'rapid-fire' });
+        addToWatchlist({ ...item, source: 'rapid-fire' });
       }
     });
     this.state.onboardingStep = 3;
@@ -473,66 +533,210 @@ class App {
     this.render();
   }
 
-  async renderDiscover(app) {
-    app.innerHTML = `<div class="loading">${this.tr.loading}</div>`;
-    let items;
-    if (this.state.mediaType === 'books') {
-      items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang);
-    } else if (this.state.mediaType === 'games') {
-      items = await fetchGamesForDiscovery(
-        this.state.selectedGenres || [],
-        this.state.selectedPlatforms || [],
-        40
-      );
-    } else {
-      items = await this.fetchMedia();
-    }
-    let filtered = items.filter(i => !this.watchlist.find(w => w.id === i.id) && !this.disliked.find(d => d.id === i.id));
-    if (this.state.blockedGenres?.length && this.state.mediaType !== 'books') {
-      filtered = filtered.filter(item => {
-        const itemGenres = (item.genres || []).map(g => {
-          const id = typeof g === 'number' ? g : g.id || g;
-          return (TMDB_GENRE_MAP[id] || '').toLowerCase();
-        });
-        return !this.state.blockedGenres.some(bg => itemGenres.includes(bg.toLowerCase()));
-      });
-    }
-    this.currentCards = filtered;
-    this.currentCardIndex = 0;
-    if (this.currentCards.length === 0) {
-      if (this.history.length === 0) {
-        const icon = this.state.mediaType === 'books' ? '📖' : this.state.mediaType === 'games' ? '🎮' : '🎬';
-        app.innerHTML = `
-          <div class="empty-state">
-            <span class="empty-state-icon">${icon}</span>
-            <h2>${this.lang === 'de' ? 'Dein Geschmack ist eine weiße Leinwand' : 'Your taste is a blank canvas'}</h2>
-            <p>${this.lang === 'de' ? 'Lass uns sie bemalen. Wische nach rechts auf das, was dein Interesse weckt.' : "Let's paint it. Swipe right on what catches your eye."}</p>
-            <button class="btn btn-primary" onclick="location.reload()">${this.lang === 'de' ? 'Los geht\'s' : 'Let\'s go'}</button>
-          </div>`;
-      } else if (this.watchlist.length === 0) {
-        app.innerHTML = `
-          <div class="empty-state">
-            <span class="empty-state-icon">📚</span>
-            <h2>${this.lang === 'de' ? 'Die Regale sind leer' : 'The shelves are bare'}</h2>
-            <p>${this.lang === 'de' ? 'Lass uns deine nächste Obsession finden.' : "Let's go find your next obsession."}</p>
-            <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Zu den Entdeckungen' : 'Take me to Discover'}</button>
-          </div>`;
-      } else {
-        app.innerHTML = `
-          <div class="wrap-party">
-            <span class="wrap-party-icon">🎉</span>
-            <h2>${this.lang === 'de' ? 'Du hast alles erobert!' : 'You\'ve seen it all!'}</h2>
-            <p>${this.lang === 'de' ? 'Dein Geschmack ist offiziell legendär. Bereit für ein neues Universum?' : 'Your taste is officially legendary. Ready for a new universe?'}</p>
-            <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Neues Universum' : 'New Universe'}</button>
-          </div>`;
-      }
-      app.querySelector('[data-nav="discover"]')?.addEventListener('click', () => {
-        this.currentCards = this.currentCards.length ? this.currentCards : this.history;
-        this.renderDiscover(document.getElementById('app'));
-      });
+  // ===== BOOK QUIZ (missing in original) =====
+  renderQuiz(app) {
+    const quiz = (BOOK_QUIZ[this.lang] || BOOK_QUIZ.de);
+    const currentQ = this._quizIndex || 0;
+    if (currentQ >= quiz.length) {
+      this.state.hasCompletedQuiz = true;
+      this.save();
+      this.render();
       return;
     }
-    this.renderCards(app);
+    const q = quiz[currentQ];
+    app.innerHTML = `
+      <div class="onboarding rapid-fire">
+        <div class="rapid-fire-header">
+          <h1>${this.t('quiz')}</h1>
+          <p>${escapeHTML(q.q)}</p>
+          <div class="rapid-fire-timer">
+            <div class="timer-bar" style="width:${((currentQ + 1) / quiz.length) * 100}%"></div>
+          </div>
+          <span class="rapid-fire-count">${currentQ + 1}/${quiz.length}</span>
+        </div>
+        <div class="watch-mode-grid" style="margin-top:20px">
+          ${q.a.map((ans, i) => `
+            <button class="watch-mode-card" data-idx="${i}">
+              <span class="watch-mode-label">${escapeHTML(ans)}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+    app.querySelectorAll('.watch-mode-card').forEach(card => {
+      card.addEventListener('click', () => {
+        this._quizIndex = (this._quizIndex || 0) + 1;
+        this.renderQuiz(app);
+      });
+    });
+  }
+
+  // ===== SKELETON LOADING =====
+  _renderSkeleton(app) {
+    app.innerHTML = `
+      <div class="discover">
+        <div class="discover-header">
+          <span class="card-count-badge">${this.t('loading')}</span>
+        </div>
+        <div class="card-stack">
+          <div class="skeleton-card">
+            <div class="skeleton-cover"></div>
+            <div class="skeleton-info">
+              <div class="skeleton-line short"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line medium"></div>
+            </div>
+          </div>
+        </div>
+        <div class="skeleton-actions">
+          <div class="skeleton-btn"></div>
+          <div class="skeleton-btn"></div>
+          <div class="skeleton-btn"></div>
+        </div>
+      </div>`;
+  }
+
+  // ===== ERROR STATE =====
+  _renderError(app, error, onRetry) {
+    const msg = getErrorMessage(error, this.lang);
+    app.innerHTML = `
+      <div class="error-state">
+        <span class="error-state-icon">📡</span>
+        <h2>${this.t('errorLoading')}</h2>
+        <p>${escapeHTML(msg)}</p>
+        ${error.message ? `<p class="error-details">${escapeHTML(error.message)}</p>` : ''}
+        <button class="btn btn-primary btn-retry">${this.t('retry')}</button>
+        <nav class="bottom-nav">
+          <button class="nav-btn active" data-view="discover">🔍 ${this.tr.discover}</button>
+          <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
+          <button class="nav-btn" data-view="history">📖</button>
+          <button class="nav-btn" data-view="stats">📊</button>
+        </nav>
+      </div>`;
+    app.querySelector('.btn-retry')?.addEventListener('click', onRetry);
+    app.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
+    });
+  }
+
+  // ===== DISCOVER (with recommender sorting, error handling, enrichment) =====
+  async renderDiscover(app) {
+    // Cancel any pending request
+    if (this._pendingAbort) {
+      this._pendingAbort.abort();
+      this._pendingAbort = null;
+    }
+    const { abort, signal } = createAbortable();
+    this._pendingAbort = { abort };
+
+    this._renderSkeleton(app);
+
+    try {
+      let items;
+      if (this.state.mediaType === 'books') {
+        items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang);
+      } else if (this.state.mediaType === 'games') {
+        items = await fetchGamesForDiscovery(
+          this.state.selectedGenres || [],
+          this.state.selectedPlatforms || [],
+          40
+        );
+      } else {
+        items = await this.fetchMedia();
+      }
+
+      if (signal.aborted) return;
+
+      let filtered = items.filter(i => !this.watchlist.find(w => w.id === i.id) && !this.disliked.find(d => d.id === i.id));
+
+      if (this.state.blockedGenres?.length && this.state.mediaType !== 'books') {
+        filtered = filtered.filter(item => {
+          const itemGenres = (item.genres || []).map(g => {
+            const id = typeof g === 'number' ? g : g.id || g;
+            return (TMDB_GENRE_MAP[id] || '').toLowerCase();
+          });
+          return !this.state.blockedGenres.some(bg => itemGenres.includes(bg.toLowerCase()));
+        });
+      }
+
+      // Enrich items in background
+      if (filtered.length > 0) {
+        // Compute media DNA for items that need it
+        filtered.forEach(item => {
+          if (!item.mediaDNA && item.overview) {
+            item.mediaDNA = mapMediaDNA(item.genres, item.overview, item.title);
+          }
+        });
+        this.enrichment.enqueue(filtered);
+      }
+
+      // Sort by recommender score (THE KEY FIX)
+      const scoredCards = filtered.map(card => ({
+        ...card,
+        _score: this.recommender.score(card)
+      }));
+      scoredCards.sort((a, b) => b._score - a._score);
+      // Remove temporary score property
+      const sortedCards = scoredCards.map(({ _score, ...card }) => card);
+
+      // Inject 15% serendipity (exploration vs exploitation)
+      if (sortedCards.length > 10) {
+        const serendipityCount = Math.max(1, Math.floor(sortedCards.length * 0.15));
+        const topCards = sortedCards.slice(0, sortedCards.length - serendipityCount);
+        const wildCards = sortedCards.slice(sortedCards.length - serendipityCount);
+        shuffleArray(wildCards);
+        this.currentCards = [...topCards, ...wildCards];
+      } else {
+        this.currentCards = sortedCards;
+      }
+
+      this.currentCardIndex = 0;
+
+      if (this.currentCards.length === 0) {
+        this._renderEmptyState(app);
+        return;
+      }
+
+      this.renderCards(app);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.warn('renderDiscover error:', error);
+      this._renderError(app, error, () => this.renderDiscover(app));
+    } finally {
+      this._pendingAbort = null;
+    }
+  }
+
+  _renderEmptyState(app) {
+    if (this.history.length === 0) {
+      const icon = this.state.mediaType === 'books' ? '📖' : this.state.mediaType === 'games' ? '🎮' : '🎬';
+      app.innerHTML = `
+        <div class="empty-state">
+          <span class="empty-state-icon">${icon}</span>
+          <h2>${this.lang === 'de' ? 'Dein Geschmack ist eine weisse Leinwand' : 'Your taste is a blank canvas'}</h2>
+          <p>${this.lang === 'de' ? 'Lass uns sie bemalen. Wische nach rechts auf das, was dein Interesse weckt.' : "Let's paint it. Swipe right on what catches your eye."}</p>
+          <button class="btn btn-primary" onclick="location.reload()">${this.lang === 'de' ? 'Los geht\'s' : 'Let\'s go'}</button>
+        </div>`;
+    } else if (this.watchlist.length === 0) {
+      app.innerHTML = `
+        <div class="empty-state">
+          <span class="empty-state-icon">📚</span>
+          <h2>${this.lang === 'de' ? 'Die Regale sind leer' : 'The shelves are bare'}</h2>
+          <p>${this.lang === 'de' ? 'Lass uns deine naechste Obsession finden.' : "Let's go find your next obsession."}</p>
+          <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Zu den Entdeckungen' : 'Take me to Discover'}</button>
+        </div>`;
+    } else {
+      app.innerHTML = `
+        <div class="wrap-party">
+          <span class="wrap-party-icon">🎉</span>
+          <h2>${this.lang === 'de' ? 'Du hast alles erobert!' : 'You\'ve seen it all!'}</h2>
+          <p>${this.lang === 'de' ? 'Dein Geschmack ist offiziell legendaer. Bereit fuer ein neues Universum?' : 'Your taste is officially legendary. Ready for a new universe?'}</p>
+          <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Neues Universum' : 'New Universe'}</button>
+        </div>`;
+    }
+    app.querySelector('[data-nav="discover"]')?.addEventListener('click', () => {
+      this.currentCards = this.currentCards.length ? this.currentCards : this.history;
+      this.renderDiscover(document.getElementById('app'));
+    });
   }
 
   async fetchMedia() {
@@ -552,6 +756,7 @@ class App {
     } catch (e) { console.warn('fetchMedia error', e); return []; }
   }
 
+  // ===== CARD RENDERING =====
   renderCards(app) {
     const card = this.currentCards[this.currentCardIndex];
     if (!card) { this.renderDiscover(app); return; }
@@ -574,14 +779,14 @@ class App {
     const platformBadges = isGame ? this._renderPlatformBadges(card) : '';
     const playtimeBadge = isGame ? this._renderPlaytimeBadge(card) : '';
     const multiplayerBadge = isGame ? this._renderMultiplayerBadge(card) : '';
-
     const blindGameHook = isBlindGame ? this._getBlindGameHook(card) : '';
     const blindGameMechanics = isBlindGame ? this._getBlindGameMechanics(card) : '';
 
     app.innerHTML = `
       <div class="discover">
         <div class="discover-header">
-          <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind">
+          <span class="card-count-badge">${this.t('cardCount', `${this.currentCardIndex + 1}/${this.currentCards.length}`)}</span>
+          <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
           </button>
         </div>
@@ -615,13 +820,13 @@ class App {
               ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview.slice(0, 120))}${card.overview.length > 120 ? '...' : ''}</p>` : ''}
               ${isBlind && !isBlindGame && card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : ''}
             </div>
-            <button class="card-info-btn" data-action="info">ℹ️</button>
+            <button class="card-info-btn" data-action="info" aria-label="${this.tr.whySeeing}">ℹ️</button>
           </div>
         </div>
         <div class="swipe-actions">
-          <button class="btn btn-nope">👎 ${this.tr.nope}</button>
-          <button class="btn btn-skip">⏭ ${this.tr.skip}</button>
-          <button class="btn btn-like">❤️ ${this.tr.like}</button>
+          <button class="btn btn-nope" aria-label="${this.tr.nope}">👎 ${this.tr.nope}</button>
+          <button class="btn btn-skip" aria-label="${this.tr.skip}">⏭ ${this.tr.skip}</button>
+          <button class="btn btn-like" aria-label="${this.tr.like}">❤️ ${this.tr.like}</button>
         </div>
         <nav class="bottom-nav">
           <button class="nav-btn active" data-view="discover">🔍 ${this.tr.discover}</button>
@@ -630,6 +835,7 @@ class App {
           <button class="nav-btn" data-view="stats">📊</button>
         </nav>
       </div>`;
+
     const cardEl = app.querySelector('.card');
     if (cardEl) {
       if (this._cardCleanupFns) this._cardCleanupFns.forEach(fn => fn());
@@ -643,6 +849,7 @@ class App {
         if (tl) this._cardCleanupFns.push(tl);
       }
     }
+
     app.querySelector('.btn-like')?.addEventListener('click', () => this.handleSwipe('right'));
     app.querySelector('.btn-nope')?.addEventListener('click', () => this.handleSwipe('left'));
     app.querySelector('.btn-skip')?.addEventListener('click', () => this.handleSwipe('up'));
@@ -662,8 +869,145 @@ class App {
     app.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
     });
+
+    // Long-press to show feedback modal
+    this._setupLongPress(cardEl, card);
   }
 
+  // ===== LONG PRESS FOR EXPLICIT FEEDBACK =====
+  _setupLongPress(cardEl, card) {
+    let pressTimer = null;
+    let startX = 0;
+    let startY = 0;
+
+    const startPress = (e) => {
+      const touch = e.touches ? e.touches[0] : e;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      pressTimer = setTimeout(() => {
+        this._showFeedbackModal(card);
+      }, 800);
+    };
+
+    const cancelPress = (e) => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    const moveCancel = (e) => {
+      if (!pressTimer) return;
+      const touch = e.touches ? e.touches[0] : e;
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+      if (dx > 10 || dy > 10) cancelPress();
+    };
+
+    cardEl.addEventListener('touchstart', startPress, { passive: true });
+    cardEl.addEventListener('touchend', cancelPress, { passive: true });
+    cardEl.addEventListener('touchmove', moveCancel, { passive: true });
+    cardEl.addEventListener('mousedown', startPress);
+    cardEl.addEventListener('mouseup', cancelPress);
+    cardEl.addEventListener('mouseleave', cancelPress);
+  }
+
+  _showFeedbackModal(card) {
+    const overlay = document.createElement('div');
+    overlay.className = 'feedback-overlay';
+    overlay.innerHTML = `
+      <div class="feedback-modal">
+        <h3>${this.t('feedbackTitle')}</h3>
+        <p>${escapeHTML(card.title)}</p>
+        <div class="feedback-options">
+          <button class="feedback-btn" data-reason="seen"><span class="feedback-icon">👀</span> ${this.t('seenIt')}</button>
+          <button class="feedback-btn" data-reason="mood"><span class="feedback-icon">🎭</span> ${this.t('wrongMood')}</button>
+          <button class="feedback-btn" data-reason="genre"><span class="feedback-icon">🚫</span> ${this.t('notMyGenre')}</button>
+          <button class="feedback-btn" data-reason="other"><span class="feedback-icon">💬</span> ${this.t('otherReason')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 400);
+      }
+    });
+
+    overlay.querySelectorAll('.feedback-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const reason = btn.dataset.reason;
+        this._applyExplicitFeedback(card, reason);
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 400);
+      });
+    });
+  }
+
+  _applyExplicitFeedback(card, reason) {
+    // Boost anti-taste for this genre
+    if (reason === 'genre' && card.genres) {
+      card.genres.forEach(g => {
+        const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+        this.recommender.profile.genreWeights[name] = (this.recommender.profile.genreWeights[name] || 0) - 3;
+      });
+      this.recommender._saveProfile();
+    }
+    // Auto-swipe left
+    this.handleSwipe('left');
+    showToast(this.lang === 'de' ? 'Verstanden — wir passen die Empfehlungen an' : 'Got it — adjusting recommendations', {
+      type: 'info',
+      duration: 2000,
+    });
+  }
+
+  // ===== SWIPE HANDLING =====
+  async handleSwipe(dir) {
+    const card = this.currentCards[this.currentCardIndex];
+    if (!card) return;
+
+    // Haptic feedback
+    if (navigator.vibrate && dir !== 'up') {
+      navigator.vibrate(dir === 'right' ? [15, 30, 15] : [20]);
+    }
+
+    if (dir === 'right') {
+      this.watchlist.push(card);
+      await addToWatchlist(card);
+      await addToHistory({ ...card, action: 'like', date: new Date().toISOString() });
+      this.recommender.updateFromSwipe(card, 'like');
+      showToast(`${this.t('swipeActionLike')}: ${card.title}`, { type: 'success', duration: 1500 });
+    } else if (dir === 'left') {
+      this.disliked.push(card);
+      await addToDisliked(card);
+      await addToHistory({ ...card, action: 'nope', date: new Date().toISOString() });
+      this.recommender.updateFromSwipe(card, 'nope');
+      // Show undo toast
+      showToast(this.t('undoMessage', card.title), {
+        type: 'info',
+        duration: 3000,
+        action: true,
+        actionLabel: this.t('undo'),
+        onAction: () => this._undoSwipe(),
+      });
+    } else {
+      await addToHistory({ ...card, action: 'skip', date: new Date().toISOString() });
+    }
+
+    this.currentCardIndex++;
+    await this.save();
+    const app = document.getElementById('app');
+    if (this.currentCardIndex >= this.currentCards.length) {
+      this.currentCardIndex = 0;
+      this.renderDiscover(app);
+    } else {
+      this.renderCards(app);
+    }
+  }
+
+  // ===== REMAINING HELPER METHODS =====
   _getCardDNATags(card) {
     const tags = [];
     const overview = (card.overview || '').toLowerCase();
@@ -742,7 +1086,7 @@ class App {
     if (/open.world|exploration/.test(genres + overview)) return 'A vast world awaits — go anywhere, do anything, at your own pace.';
     if (/horror|survival.horror/.test(genres)) return 'Terror lurks around every corner. Stay alert. Stay alive.';
     if (/simulation|farming|building/.test(genres)) return 'Build, grow, and create your own peaceful world.';
-    if (/puzzle|rätsel/.test(genres)) return 'Think outside the box — every solution is a surprise.';
+    if (/puzzle|raetsel/.test(genres)) return 'Think outside the box — every solution is a surprise.';
     if (/strategy|tactical/.test(genres)) return 'Outsmart, outplay, and conquer through pure brainpower.';
     if (/rpg|role.playing/.test(genres)) return 'Forge your character, shape your story, become a legend.';
     if (/platformer|metroidvania/.test(genres)) return 'Precision jumping meets rewarding exploration.';
@@ -787,11 +1131,9 @@ class App {
     if (!videoId) return null;
     const cover = cardEl.querySelector('.card-cover');
     if (!cover) return null;
-
     let iframe = null;
     let hoverTimer = null;
     let isPlaying = false;
-
     const startPreview = () => {
       hoverTimer = setTimeout(() => {
         if (isPlaying) return;
@@ -807,7 +1149,6 @@ class App {
         setTimeout(() => { iframe.style.opacity = '1'; }, 50);
       }, 1500);
     };
-
     const stopPreview = () => {
       clearTimeout(hoverTimer);
       if (iframe && isPlaying) {
@@ -819,13 +1160,11 @@ class App {
         isPlaying = false;
       }
     };
-
     const cleanup = () => {
       clearTimeout(hoverTimer);
       if (iframe) { iframe.remove(); iframe = null; }
       isPlaying = false;
     };
-
     cardEl.addEventListener('mouseenter', startPreview);
     cardEl.addEventListener('mouseleave', stopPreview);
     return cleanup;
@@ -890,13 +1229,14 @@ class App {
     return cleanup;
   }
 
+  // ===== CARD MODAL WITH IMPROVED REASONING =====
   _showCardModal(card, app) {
     const isGame = card.type === 'game' || card.source === 'igdb';
     const modal = document.createElement('div');
     modal.className = 'card-modal-overlay';
     modal.innerHTML = `
       <div class="card-modal">
-        <button class="modal-close">✕</button>
+        <button class="modal-close" aria-label="Close">✕</button>
         <div class="modal-hero">
           ${card.cover ? `<img src="${escapeHTML(card.cover)}" alt="" class="modal-cover">` : ''}
         </div>
@@ -916,6 +1256,7 @@ class App {
           ` : ''}
           ${card.overview ? `<p class="modal-overview">${escapeHTML(card.overview)}</p>` : ''}
           ${this._renderWhySeeing(card)}
+          ${this._renderCrossMediaSuggestions(card)}
           ${isGame ? this._renderStoreButtons(card) : this._renderStreamingButtons(card)}
           <div class="modal-actions">
             <button class="btn btn-like modal-add" data-id="${escapeHTML(card.id)}">❤️ ${this.tr.like}</button>
@@ -935,36 +1276,130 @@ class App {
         setTimeout(() => modal.remove(), 300);
       }
     });
-    modal.querySelector('.modal-add')?.addEventListener('click', () => {
-      if (!this.watchlist.find(w => w.id === card.id)) this.watchlist.push(card);
-      this.save();
+    modal.querySelector('.modal-add')?.addEventListener('click', async () => {
+      if (!this.watchlist.find(w => w.id === card.id)) {
+        this.watchlist.push(card);
+        await addToWatchlist(card);
+      }
+      await this.save();
       modal.classList.remove('open');
       setTimeout(() => modal.remove(), 300);
       this.renderCards(app);
     });
-    modal.querySelector('.modal-nope')?.addEventListener('click', () => {
-      if (!this.disliked.find(d => d.id === card.id)) this.disliked.push(card);
-      this.save();
+    modal.querySelector('.modal-nope')?.addEventListener('click', async () => {
+      if (!this.disliked.find(d => d.id === card.id)) {
+        this.disliked.push(card);
+        await addToDisliked(card);
+      }
+      await this.save();
       modal.classList.remove('open');
       setTimeout(() => modal.remove(), 300);
       this.renderCards(app);
     });
   }
 
+  // ===== IMPROVED "WHY AM I SEEING THIS?" =====
   _renderWhySeeing(card) {
     const reasons = [];
     const s = this.state;
+
+    // Check if we liked something similar
+    if (card.genres && this.watchlist.length > 0) {
+      const likedGenres = {};
+      this.watchlist.forEach(w => {
+        (w.genres || []).forEach(g => {
+          const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+          likedGenres[name] = (likedGenres[name] || 0) + 1;
+        });
+      });
+      const matchingGenres = (card.genres || []).filter(g => {
+        const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+        return likedGenres[name] >= 2;
+      }).map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g));
+      if (matchingGenres.length) {
+        // Find the most similar liked item
+        let bestMatch = null;
+        let bestScore = 0;
+        this.watchlist.forEach(w => {
+          const overlap = (w.genres || []).filter(g1 =>
+            (card.genres || []).some(g2 => {
+              const n1 = typeof g1 === 'string' ? g1 : (TMDB_GENRE_MAP[g1] || g1);
+              const n2 = typeof g2 === 'string' ? g2 : (TMDB_GENRE_MAP[g2] || g2);
+              return n1 === n2;
+            })
+          ).length;
+          if (overlap > bestScore) { bestScore = overlap; bestMatch = w; }
+        });
+        if (bestMatch) {
+          reasons.push(`🎯 ${this.t('becauseYouLiked', bestMatch.title)}`);
+        } else {
+          reasons.push(`🎯 ${this.lang === 'de' ? 'Passt zu Genres die du magst' : 'Matches genres you like'}: ${matchingGenres.slice(0, 2).join(', ')}`);
+        }
+      }
+    }
+
+    // Genre overlap with selected genres
     if (card.genres && s.selectedGenres?.length) {
       const overlap = card.genres.filter(g => s.selectedGenres.includes(g.id || g));
-      if (overlap.length) reasons.push(`${this.lang === 'de' ? 'Passt zu deinen' : 'Matches your'} ${overlap.length} ${this.lang === 'de' ? 'gewählten Genres' : 'selected genres'}`);
+      if (overlap.length) {
+        reasons.push(`${this.lang === 'de' ? '⭐ Passt zu deinen' : '⭐ Matches your'} ${overlap.length} ${this.lang === 'de' ? 'gewählten Genres' : 'selected genres'}`);
+      }
     }
+
+    // Watch mode
     if (this.state.watchMode !== 'solo') reasons.push(this.tr[this.state.watchMode + 'Sub']);
+
+    // Platform match for games
+    if ((card.type === 'game' || card.source === 'igdb') && s.selectedPlatforms?.length && card.platforms) {
+      const platformIds = card.platforms.map(p => p.id);
+      const match = platformIds.filter(id => s.selectedPlatforms.includes(id));
+      if (match.length) {
+        reasons.push(`🎮 ${this.lang === 'de' ? 'Verfügbar auf deinen Plattformen' : 'Available on your platforms'}`);
+      }
+    }
+
     if (!reasons.length) reasons.push(this.tr.matchReason);
+
     return `
       <div class="modal-reasons">
         <h4>${this.tr.whySeeing}</h4>
-        ${reasons.map(r => `<p class="reason-item">🎯 ${escapeHTML(r)}</p>`).join('')}
+        ${reasons.map(r => `<p class="reason-item">${escapeHTML(r)}</p>`).join('')}
       </div>`;
+  }
+
+  // ===== CROSS-MEDIA RECOMMENDATIONS =====
+  _renderCrossMediaSuggestions(card) {
+    if (!card.genres || !card.genres.length) return '';
+    const currentType = this.state.mediaType;
+    const mappings = CROSS_MEDIA_GENRES[currentType];
+    if (!mappings) return '';
+
+    const suggestions = [];
+    const sourceGenres = card.genres.map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g));
+
+    // Build simple cross-media suggestions from watchlist
+    if (this.watchlist.length >= 3) {
+      const otherType = currentType === 'games' ? 'movies' : 'games';
+      const candidates = this.watchlist.filter(w => w.type === otherType || w.source === (otherType === 'games' ? 'igdb' : 'tmdb')).slice(0, 4);
+      if (candidates.length >= 2) {
+        return `
+          <div class="cross-media-section">
+            <h3>🌐 ${this.t('crossMediaTitle')}</h3>
+            <div class="cross-media-cards">
+              ${candidates.map(c => `
+                <div class="cross-media-card" data-id="${escapeHTML(c.id)}">
+                  ${c.cover ? `<img src="${escapeHTML(c.cover)}" alt="">` : `<div style="height:100px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:2rem">${c.type === 'game' || c.source === 'igdb' ? '🎮' : '🎬'}</div>`}
+                  <div class="cm-info">
+                    <div class="cm-title">${escapeHTML(c.title)}</div>
+                    <div class="cm-meta">${c.year || ''} · ${c.type === 'game' || c.source === 'igdb' ? 'Game' : 'Movie'}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>`;
+      }
+    }
+    return '';
   }
 
   _renderStreamingButtons(card) {
@@ -978,7 +1413,7 @@ class App {
       <div class="streaming-buttons">
         ${providers.map(p => `
           <button class="streaming-btn" style="--sp-color:${p.color}" data-provider="${p.id}">
-            ▶ ${this.tr.playOn.replace('{0}', p.name)}
+            ▶ ${this.t('playOn', p.name)}
           </button>
         `).join('')}
       </div>`;
@@ -993,18 +1428,9 @@ class App {
     const hasPS = platforms.some(p => /playstation/.test(p));
     const hasXbox = platforms.some(p => /xbox/.test(p));
     const hasNintendo = platforms.some(p => /nintendo|switch/.test(p));
-    const hasEpic = hasPC;
-    const hasGOG = hasPC;
 
     if (hasPC) {
-      stores.push({ name: 'Steam', icon: '💨', color: '#1b2838', url: `steam://store/` });
       stores.push({ name: 'Steam Web', icon: '🌐', color: '#1b2838', url: `https://store.steampowered.com/app/${card.igdb_id || ''}/${slug}` });
-    }
-    if (hasEpic) {
-      stores.push({ name: 'Epic Games', icon: '🎯', color: '#2f2f2f', url: `https://store.epicgames.com/en-US/p/${slug}` });
-    }
-    if (hasGOG) {
-      stores.push({ name: 'GOG', icon: '🌀', color: '#a855f7', url: `https://www.gog.com/games?text=${encodeURIComponent(card.title)}` });
     }
     if (hasPS) {
       stores.push({ name: 'PlayStation Store', icon: '🎮', color: '#003087', url: `https://store.playstation.com/en-us/search/${encodeURIComponent(card.title)}` });
@@ -1029,31 +1455,7 @@ class App {
       </div>`;
   }
 
-  handleSwipe(dir) {
-    const card = this.currentCards[this.currentCardIndex];
-    if (!card) return;
-    if (dir === 'right') {
-      this.watchlist.push(card);
-      this.history.push({ ...card, action: 'like', date: new Date().toISOString() });
-      this.recommender.updateFromSwipe(card, 'like');
-    } else if (dir === 'left') {
-      this.disliked.push(card);
-      this.history.push({ ...card, action: 'nope', date: new Date().toISOString() });
-      this.recommender.updateFromSwipe(card, 'nope');
-    } else {
-      this.history.push({ ...card, action: 'skip', date: new Date().toISOString() });
-    }
-    this.currentCardIndex++;
-    this.save();
-    const app = document.getElementById('app');
-    if (this.currentCardIndex >= this.currentCards.length) {
-      this.currentCardIndex = 0;
-      this.renderDiscover(app);
-    } else {
-      this.renderCards(app);
-    }
-  }
-
+  // ===== VIEW ROUTING =====
   renderView(view, app) {
     if (view === 'watchlist') return this.renderWatchlist(app);
     if (view === 'history') return this.renderHistory(app);
@@ -1074,7 +1476,7 @@ class App {
           ${isGame && item.platforms?.length ? `<span class="list-meta">${item.platforms.map(p => p.abbr || p.name).join(', ')}</span>` : ''}
           ${isGame && item.rating ? `<span class="list-meta">⭐ ${typeof item.rating === 'number' ? item.rating.toFixed(0) : item.rating}</span>` : ''}
         </div>
-        <button class="btn btn-sm btn-remove" data-id="${escapeHTML(item.id)}">✕</button>
+        <button class="btn btn-sm btn-remove" data-id="${escapeHTML(item.id)}" aria-label="Remove">✕</button>
       </div>`;
     }).join('');
     app.innerHTML = `
@@ -1088,7 +1490,7 @@ class App {
           <button class="btn btn-export">${this.tr.letterboxd}</button>
           <button class="btn btn-share-dna">🔗 ${this.tr.dnaLink}</button>
         </div>
-        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurück' : 'Back'}</button>
+        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
         <nav class="bottom-nav">
           <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
           <button class="nav-btn active" data-view="watchlist">📝 ${this.watchlist.length}</button>
@@ -1097,9 +1499,12 @@ class App {
         </nav>
       </div>`;
     app.querySelectorAll('.btn-remove').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.watchlist = this.watchlist.filter(w => w.id !== btn.dataset.id);
-        this.save(); this.renderView('watchlist', app);
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        this.watchlist = this.watchlist.filter(w => w.id !== id);
+        await removeFromWatchlist(id);
+        await this.save();
+        this.renderView('watchlist', app);
       });
     });
     app.querySelector('.btn-export')?.addEventListener('click', () => this.exportLetterboxdCSV());
@@ -1137,6 +1542,7 @@ class App {
     const doSpin = () => {
       btnSpin.disabled = true;
       spins = 0;
+      let speed = 80;
       const interval = setInterval(() => {
         currentIdx = (currentIdx + 1) % items.length;
         const item = items[currentIdx];
@@ -1144,6 +1550,9 @@ class App {
         display.innerHTML += `<span>${escapeHTML(item.title)}</span>`;
         display.classList.add('spinning');
         spins++;
+        // Accelerate then decelerate
+        if (spins < 5) speed = Math.max(30, speed - 10);
+        else if (spins > maxSpins - 5) speed = Math.min(200, speed + 30);
         if (spins >= maxSpins) {
           clearInterval(interval);
           display.classList.remove('spinning');
@@ -1151,7 +1560,7 @@ class App {
           btnSpin.disabled = false;
           this._spawnConfetti(modal);
         }
-      }, 80 + spins * 5);
+      }, speed);
     };
     btnSpin?.addEventListener('click', doSpin);
     modal.addEventListener('click', (e) => {
@@ -1186,7 +1595,7 @@ class App {
       <div class="view history-view">
         <h2>${this.tr.history}</h2>
         <div class="list">${items || `<p class="empty">${this.tr.empty}</p>`}</div>
-        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurück' : 'Back'}</button>
+        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
         <nav class="bottom-nav">
           <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
           <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
@@ -1257,7 +1666,7 @@ class App {
           <div class="genre-bars">${topGenres.map(([g, c]) => `
             <div class="genre-bar"><span>${escapeHTML(g)}</span><div class="bar-fill" style="width:${Math.min(c / total * 100, 100)}%"></div><span>${c}</span></div>
           `).join('')}</div>` : ''}
-        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurück' : 'Back'}</button>
+        <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
         <nav class="bottom-nav">
           <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
           <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
@@ -1357,7 +1766,7 @@ class App {
     const encoded = btoa(JSON.stringify(dna));
     const url = `${window.location.origin}${window.location.pathname}?dna=${encoded}`;
     navigator.clipboard?.writeText(url).then(() => {
-      alert(this.lang === 'de' ? 'Link kopiert!' : 'Link copied!');
+      showToast(this.lang === 'de' ? 'Link kopiert!' : 'Link copied!', { type: 'success', duration: 2000 });
     }).catch(() => {
       prompt(this.lang === 'de' ? 'Kopiere diesen Link:' : 'Copy this link:', url);
     });

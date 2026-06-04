@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-BookSwipe Server
-================
-Secure proxy server for TMDB, Trakt, and Google Books APIs.
+BookSwipe Server v3
+===================
+Secure proxy server for TMDB, Trakt, Google Books, and IGDB APIs.
+Improvements: POST support for IGDB, true LRU cache, health endpoint.
+
 Set environment variables before running:
   TMDB_API_KEY=your_key TRAKT_API_KEY=optional python3 server.py
 """
@@ -18,7 +20,7 @@ import time
 import threading
 import re
 import logging
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 
@@ -43,9 +45,35 @@ _igdb_token_expires = 0
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('bookswipe')
 
-_cache = {}
-_cache_lock = threading.Lock()
-CACHE_MAX = 2000
+# True LRU Cache using OrderedDict
+class LRUCache:
+    def __init__(self, max_size=2000):
+        self._cache = OrderedDict()
+        self._lock = threading.Lock()
+        self.max_size = max_size
+
+    def get(self, key, ttl):
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            if time.time() - entry['t'] > ttl:
+                del self._cache[key]
+                return None
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            return entry['d']
+
+    def set(self, key, data):
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            self._cache[key] = {'d': data, 't': time.time()}
+            if len(self._cache) > self.max_size:
+                # Evict oldest (first item)
+                self._cache.popitem(last=False)
+
+_cache = LRUCache(max_size=2000)
 
 _rate_limits = defaultdict(list)
 _rate_lock = threading.Lock()
@@ -60,23 +88,6 @@ def _check_rate(ip):
             return False
         _rate_limits[ip].append(now)
         return True
-
-def cache_get(key, ttl):
-    with _cache_lock:
-        e = _cache.get(key)
-        if e and time.time() - e['t'] < ttl:
-            _cache.pop(key, None)
-            _cache[key] = e
-            return e['d']
-        if e: del _cache[key]
-    return None
-
-def cache_set(key, data):
-    with _cache_lock:
-        if len(_cache) >= CACHE_MAX:
-            for k in list(_cache.keys())[:CACHE_MAX // 5]:
-                del _cache[k]
-        _cache[key] = {'d': data, 't': time.time()}
 
 def _get_igdb_token():
     global _igdb_token, _igdb_token_expires
@@ -95,6 +106,7 @@ def _get_igdb_token():
             resp = json.loads(r.read())
             _igdb_token = resp.get('access_token', '')
             _igdb_token_expires = time.time() + resp.get('expires_in', 3600)
+            log.info('IGDB token refreshed, expires in %ds', resp.get('expires_in', 3600))
             return _igdb_token
     except Exception as e:
         log.warning('IGDB token fetch failed: %s', e)
@@ -106,20 +118,26 @@ _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
 _IGDB_BODY_RE = re.compile(r'^(fields|search|where|sort|limit|offset)')
 
-def fetch(url, headers=None, ttl=300):
-    c = cache_get(url, ttl)
-    if c is not None: return c
-    req = urllib.request.Request(url, headers={'User-Agent': 'BookSwipe/2.0'})
+def fetch(url, headers=None, ttl=300, method='GET', body=None):
+    cache_key = f"{method}:{url}:{body or ''}"
+    c = _cache.get(cache_key, ttl)
+    if c is not None:
+        return c
+    req_headers = {'User-Agent': 'BookSwipe/3.0'}
     if headers:
-        for k, v in headers.items(): req.add_header(k, v)
+        for k, v in headers.items():
+            req_headers[k] = v
     try:
+        req = urllib.request.Request(url, headers=req_headers, method=method, data=body.encode() if body else None)
         with urllib.request.urlopen(req, timeout=15) as r:
             data = json.loads(r.read())
-            cache_set(url, data)
+            _cache.set(cache_key, data)
             return data
     except urllib.error.HTTPError as e:
-        return {'error': f'HTTP {e.code}'}
+        log.warning('HTTP %d for %s', e.code, url[:100])
+        return {'error': f'HTTP {e.code}', 'status': e.code}
     except Exception as e:
+        log.warning('Fetch error for %s: %s', url[:100], e)
         return {'error': str(e)}
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -131,23 +149,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         ip = self._client_ip()
-        if not _check_rate(ip): return self._json({'error': 'Rate limit exceeded'}, 429)
+        if not _check_rate(ip):
+            return self._json({'error': 'Rate limit exceeded'}, 429)
         p = self.path
+        # Health check
+        if p == '/health':
+            return self._json({'status': 'ok', 'version': '3.0'})
         if p.startswith('/proxy/tmdb/'):    return self._tmdb(p[12:])
         if p.startswith('/proxy/trakt/'):   return self._trakt(p[13:])
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
         super().do_GET()
 
+    def do_POST(self):
+        ip = self._client_ip()
+        if not _check_rate(ip):
+            return self._json({'error': 'Rate limit exceeded'}, 429)
+        p = self.path
+        if p.startswith('/proxy/igdb/'):    return self._igdb_post(p[12:])
+        self._json({'error': 'Method not allowed'}, 405)
+
     def _tmdb(self, path):
-        if not TMDB_KEY: return self._json({'error': 'TMDB_API_KEY not set'}, 503)
-        if not _OK_TMDB.match(path.split('?')[0]): return self._json({'error': 'Invalid path'}, 400)
+        if not TMDB_KEY:
+            return self._json({'error': 'TMDB_API_KEY not set', 'status': 503}, 503)
+        if not _OK_TMDB.match(path.split('?')[0]):
+            return self._json({'error': 'Invalid path', 'status': 400}, 400)
         data = fetch(f'{TMDB_BASE}/{path}', headers={'Authorization': f'Bearer {TMDB_KEY}'}, ttl=300)
+        if 'status' in data and isinstance(data['status'], int):
+            return self._json(data, data['status'])
         self._json(data)
 
     def _trakt(self, path):
-        if not TRAKT_KEY: return self._json({'error': 'TRAKT_API_KEY not set'}, 503)
-        if not _OK_TRAKT.match(path.split('?')[0]): return self._json({'error': 'Invalid path'}, 400)
+        if not TRAKT_KEY:
+            return self._json({'error': 'TRAKT_API_KEY not set', 'status': 503}, 503)
+        if not _OK_TRAKT.match(path.split('?')[0]):
+            return self._json({'error': 'Invalid path', 'status': 400}, 400)
         data = fetch(f'{TRAKT_BASE}/{path}', {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
@@ -157,7 +193,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _gbooks(self, fullpath):
         qs = fullpath.split('?', 1)[1] if '?' in fullpath else ''
-        if len(qs) > 2048: return self._json({'error': 'Query too long'}, 400)
+        if len(qs) > 2048:
+            return self._json({'error': 'Query too long', 'status': 400}, 400)
         try:
             params = urllib.parse.parse_qs(qs)
             filtered = {k: v[0] for k, v in params.items() if k in _GBOOKS_PARAMS}
@@ -167,17 +204,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._json(data)
 
     def _igdb(self, path):
+        """GET-based IGDB proxy (kept for backward compat)"""
         token = _get_igdb_token()
-        if not token: return self._json({'error': 'TWITCH_CLIENT_ID/SECRET not set'}, 503)
+        if not token:
+            return self._json({'error': 'TWITCH_CLIENT_ID/SECRET not set', 'status': 503}, 503)
         qs = urllib.parse.unquote(path.split('?', 1)[1] if '?' in path else '')
         body = ''
         if qs.startswith('body='):
             body = qs[5:]
         if not body or not _IGDB_BODY_RE.match(body.strip()):
-            return self._json({'error': 'Invalid IGDB query'}, 400)
+            return self._json({'error': 'Invalid IGDB query', 'status': 400}, 400)
+        return self._do_igdb_request(body, token)
+
+    def _igdb_post(self, path):
+        """POST-based IGDB proxy (preferred, no URL length limits)"""
+        token = _get_igdb_token()
+        if not token:
+            return self._json({'error': 'TWITCH_CLIENT_ID/SECRET not set', 'status': 503}, 503)
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 10000:
+            return self._json({'error': 'Body too large', 'status': 400}, 400)
+        body = self.rfile.read(content_length).decode('utf-8')
+        if not body or not _IGDB_BODY_RE.match(body.strip()):
+            return self._json({'error': 'Invalid IGDB query', 'status': 400}, 400)
+        return self._do_igdb_request(body, token)
+
+    def _do_igdb_request(self, body, token):
         cache_key = f'igdb:{body}'
-        cached = cache_get(cache_key, 600)
-        if cached is not None: return self._json(cached)
+        cached = _cache.get(cache_key, 600)
+        if cached is not None:
+            return self._json(cached)
         try:
             req = urllib.request.Request(f'{IGDB_BASE}/games', data=body.encode(), method='POST')
             req.add_header('Client-ID', TWITCH_CLIENT_ID)
@@ -185,12 +241,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             req.add_header('Accept', 'application/json')
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = json.loads(r.read())
-                cache_set(cache_key, data)
+                _cache.set(cache_key, data)
                 self._json(data)
         except urllib.error.HTTPError as e:
-            self._json({'error': f'IGDB HTTP {e.code}'}, e.code)
+            log.warning('IGDB HTTP %d', e.code)
+            self._json({'error': f'IGDB HTTP {e.code}', 'status': e.code}, e.code)
         except Exception as e:
-            self._json({'error': str(e)}, 500)
+            log.warning('IGDB error: %s', e)
+            self._json({'error': str(e), 'status': 500}, 500)
 
     def _json(self, data, status=200):
         body = json.dumps(data).encode()
@@ -203,7 +261,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
 
@@ -221,15 +279,17 @@ class ThreadedHTTP(ThreadingMixIn, HTTPServer):
 if __name__ == '__main__':
     os.chdir(DIR)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    if os.fork() > 0: sys.exit(0)
-    os.setsid()
-    if os.fork() > 0: sys.exit(0)
-    sys.stdout = open(os.path.join(DIR, 'server.log'), 'w')
-    sys.stderr = sys.stdout
+    # Foreground mode (daemonization is optional)
+    if os.environ.get('BOOKSWIPE_DAEMON'):
+        if os.fork() > 0: sys.exit(0)
+        os.setsid()
+        if os.fork() > 0: sys.exit(0)
+        sys.stdout = open(os.path.join(DIR, 'server.log'), 'a')
+        sys.stderr = sys.stdout
     if not TMDB_KEY: log.warning('TMDB_API_KEY not set - TMDB proxy will return 503')
     if not TRAKT_KEY: log.warning('TRAKT_API_KEY not set - Trakt proxy will return 503')
     if not TWITCH_CLIENT_ID: log.warning('TWITCH_CLIENT_ID not set - IGDB proxy will return 503')
-    log.info('Starting on http://%s:%d', BIND, PORT)
+    log.info('BookSwipe v3 starting on http://%s:%d', BIND, PORT)
     httpd = ThreadedHTTP((BIND, PORT), Handler)
-    print(f'BookSwipe: http://{BIND}:{PORT}')
+    print(f'BookSwipe v3: http://{BIND}:{PORT}')
     httpd.serve_forever()

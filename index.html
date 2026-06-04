@@ -3,20 +3,42 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="description" content="BookSwipe - Discover books and movies by swiping">
-<meta name="theme-color" content="#1a1a2e">
+<meta name="description" content="BookSwipe - Discover books, movies & games by swiping. Your personal taste companion.">
+<meta name="theme-color" content="#0f0f1a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BookSwipe">
+<meta name="application-name" content="BookSwipe">
+<meta name="msapplication-TileColor" content="#0f0f1a">
 <link rel="manifest" href="static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="icon" type="image/png" href="/static/icon-192.png">
 <title>BookSwipe</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+<noscript>
+  <div style="max-width:480px;margin:60px auto;padding:0 20px;text-align:center;font-family:system-ui,sans-serif;color:#e8e8f0;background:#0f0f1a;min-height:100vh;">
+    <div style="font-size:4rem;margin-bottom:20px;">📚🎬🎮</div>
+    <h1 style="font-size:1.8rem;margin-bottom:12px;">BookSwipe</h1>
+    <p style="color:#a0a0b8;line-height:1.6;">
+      BookSwipe requires JavaScript to work. It's a swipe-based discovery app for books, movies, TV shows, and games.<br><br>
+      Please enable JavaScript in your browser settings to continue.
+    </p>
+  </div>
+</noscript>
 <div id="app"></div>
+<div id="toast-container"></div>
 <script type="module" src="js/app.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js').then(function(reg) {
+      console.log('SW registered:', reg.scope);
+    }).catch(function(err) {
+      console.log('SW registration failed:', err);
+    });
+  });
 }
 </script>
 </body>

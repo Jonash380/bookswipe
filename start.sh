@@ -1,13 +1,10 @@
 #!/bin/bash
-# BookSwipe Launcher
+# BookSwipe Launcher v3
 # Usage: ./start.sh
 # Optional env vars: TMDB_API_KEY, TRAKT_API_KEY, BOOKSWIPE_PORT, BOOKSWIPE_BIND
+# For daemon mode: BOOKSWIPE_DAEMON=1 ./start.sh
 
 cd "$(dirname "$0")"
-
-# Kill existing instance
-pkill -f "python3.*server.py" 2>/dev/null
-sleep 0.5
 
 # Check for TMDB key
 if [ -z "$TMDB_API_KEY" ]; then
@@ -19,15 +16,9 @@ fi
 PORT="${BOOKSWIPE_PORT:-3000}"
 BIND="${BOOKSWIPE_BIND:-127.0.0.1}"
 
-echo "🎬 BookSwipe starting on http://${BIND}:${PORT}"
-python3 server.py &
-sleep 1
+echo "🎬 BookSwipe v3 starting on http://${BIND}:${PORT}"
+echo "   Press Ctrl+C to stop"
+echo ""
 
-# Check if server started
-if curl -s "http://${BIND}:${PORT}/" > /dev/null 2>&1; then
-  echo "✅ Server running at http://${BIND}:${PORT}"
-  echo "   Open this URL in your browser"
-else
-  echo "❌ Server failed to start. Check server.log for details."
-  cat server.log 2>/dev/null
-fi
+# Run in foreground (Ctrl+C to stop)
+python3 server.py
