@@ -17,7 +17,7 @@ export const GAME_GENRES = {
     { id: 35, name: 'Kartenspiel' },
     { id: 36, name: 'Casual' },
     { id: 37, name: 'Indie' },
-    { id: 39, name: 'Jump 'n' Run' },
+    { id: 39, name: "Jump 'n' Run" },
     { id: 41, name: 'Taktik-RPG' },
     { id: 42, name: 'Quiz' },
     { id: 43, name: 'Gelegenheitsspiel' },
@@ -115,7 +115,7 @@ export const GAME_MECHANICS = {
     { id: 'crafting', label: 'Crafting' },
     { id: 'base_building', label: 'Basismodifikation' },
     { id: 'stealth', label: 'Schleichen' },
-    { id: 'platformer', label: 'Jump 'n' Run' },
+    { id: 'platformer', label: "Jump 'n' Run" },
     { id: 'puzzle', label: 'Rätsel' },
     { id: 'turn_based', label: 'Rundenbasiert' },
     { id: 'real_time', label: 'Echtzeit' },
@@ -368,7 +368,7 @@ export const ICONIC_GAMES = [
   { id:'terraria', name:'Terraria', steamAppId:105600, year:2011, genres:[13,37], rating:90, platforms:[6,8,49,130], playtime:80, tags:['Sandbox','Crafting','Exploration','Pixel Art'], reviewSentiment:'overwhelming_positive' },
   { id:'cuphead', name:'Cuphead', steamAppId:268910, year:2017, genres:[2,39], rating:88, platforms:[6,8,49,130], playtime:12, tags:['Difficult','Hand-drawn','Co-op','Retro'], reviewSentiment:'overwhelming_positive' },
   { id:'ori_willis', name:'Ori and the Will of the Wisps', steamAppId:261570, year:2020, genres:[39,24], rating:93, platforms:[6,49,130], playtime:10, tags:['Metroidvania','Atmospheric','Beautiful','Emotional'], reviewSentiment:'overwhelming_positive' },
-  { id:' Factorio', name:'Factorio', steamAppId:427520, year:2020, genres:[15,13], rating:98, platforms:[6], playtime:200, tags:['Automation','Factory','Strategy','Sandbox'], reviewSentiment:'overwhelming_positive' },
+  { id:'factorio', name:'Factorio', steamAppId:427520, year:2020, genres:[15,13], rating:98, platforms:[6], playtime:200, tags:['Automation','Factory','Strategy','Sandbox'], reviewSentiment:'overwhelming_positive' },
   { id:'rimworld', name:'RimWorld', steamAppId:294100, year:2018, genres:[15,13], rating:97, platforms:[6], playtime:150, tags:['Colony Sim','Story Rich','Sandbox','Difficult'], reviewSentiment:'overwhelming_positive' },
   { id:'subnautica', name:'Subnautica', steamAppId:264710, year:2018, genres:[13,31], rating:90, platforms:[6,8,49], playtime:18, tags:['Survival','Exploration','Atmospheric','Open World'], reviewSentiment:'overwhelming_positive' },
   { id:'doom_eternal', name:'DOOM Eternal', steamAppId:782330, year:2020, genres:[2], rating:90, platforms:[6,8,49], playtime:14, tags:['FPS','Action','Fast-Paced','Difficult'], reviewSentiment:'very_positive' },
@@ -379,7 +379,6 @@ export const ICONIC_GAMES = [
   { id:'vampire_survivors', name:'Vampire Survivors', steamAppId:1794680, year:2022, genres:[2,37], rating:95, platforms:[6], playtime:40, tags:['Roguelike','Bullet Hell','Casual','Addictive'], reviewSentiment:'overwhelming_positive' },
   { id:'palworld', name:'Palworld', steamAppId:1623730, year:2024, genres:[13,12], rating:82, platforms:[6,49], playtime:25, tags:['Survival','Crafting','Multiplayer','Open World'], reviewSentiment:'very_positive' },
   { id:'lethal_company', name:'Lethal Company', steamAppId:2081400, year:2023, genres:[13], rating:97, platforms:[6], playtime:30, tags:['Horror','Co-op','Funny','Indie'], reviewSentiment:'overwhelming_positive' },
-  { id:'bg3', name:"Baldur's Gate 3", steamAppId:1086940, year:2023, genres:[12,16], rating:96, platforms:[6,48], playtime:60, tags:['Story-Rich','Choices Matter','Fantasy','Turn-Based'], reviewSentiment:'overwhelming_positive' }
 ];
 
 export const GAME_SEARCH = {

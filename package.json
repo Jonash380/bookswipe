@@ -1,0 +1,16 @@
+{
+  "name": "bookswipe",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Jonash380/bookswipe/issues"
+  },
+  "homepage": "https://github.com/Jonash380/bookswipe#readme",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

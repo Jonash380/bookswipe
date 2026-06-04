@@ -1,4 +1,4 @@
-import { escapeHTML, shuffleArray, TMDB_GENRE_MAP } from './utils.js';
+import { escapeHTML, shuffleArray, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON, safeSetJSON } from './utils.js';
 import { BOOK_GENRES, BOOK_MOODS, BOOK_QUIZ, ERA_FILTERS, BOOK_SEARCH, COVER_PLACEHOLDERS } from './books.js';
 import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
@@ -21,6 +21,7 @@ import {
 } from './storage.js';
 import { createAbortable, getErrorMessage, fetchDeduped } from './api-client.js';
 import { showToast, dismissToast, clearAllToasts } from './toast.js';
+import { ABTest } from './experiment.js';
 
 // ===== CONSTANTS =====
 const LANG = {
@@ -155,6 +156,7 @@ class App {
       pacingFilter: false, throwbackActive: false, selectedEras: [],
       hasCompletedOnboarding: false, hasCompletedQuiz: false,
       watchMode: 'solo', onboardingStep: 0, blindDateMode: false,
+      wildcardFrequency: 50,
       blockedGenres: [], boostedMoods: [], selectedPlatforms: []
     };
     this.watchlist = [];
@@ -165,17 +167,64 @@ class App {
     this.swipeEngine = null;
     this.enrichment = new EnrichmentWorker(this);
     this.recommender = new Recommender(this);
+    this.experiment = new ABTest({ app: this });
+    // End experiment session on page unload, start new one on visibility change
+    window.addEventListener('beforeunload', () => this.experiment.endSession());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.experiment.endSession();
+      else this.experiment.startSession();
+    });
     this.tr = LANG[this.lang] || LANG.de;
     this._cleanupFns = [];
     this._pendingAbort = null;
     this._loadDNAFromURL();
     this._bindKeyboard();
+    this._genreMap = TMDB_GENRE_MAP;
     document.documentElement.lang = this.lang;
     // Migrate legacy data, load state, then render
     migrateFromLocalStorage()
       .then(() => this._loadState())
       .then(() => this.render())
       .catch(() => this.render());
+  }
+
+  // ===== URL FILTER SYNC =====
+  _applyURLFilters() {
+    const p = new URLSearchParams(window.location.search);
+    const genres = p.get('genres');
+    const moods = p.get('moods');
+    const type = p.get('type');
+    const lang = p.get('lang');
+
+    if (type && ['movies','tv','books','games'].includes(type)) {
+      this.state.mediaType = type;
+    }
+    if (lang && ['de','en'].includes(lang)) {
+      this.lang = lang;
+      this.tr = LANG[lang];
+    }
+    if (genres) {
+      this.state.selectedGenres = genres.split(',').map(g => {
+        const n = parseInt(g, 10);
+        return isNaN(n) ? g : n;
+      });
+    }
+    if (moods) {
+      this.state.selectedMoods = moods.split(',');
+    }
+  }
+
+  _syncFiltersToURL() {
+    const p = new URLSearchParams();
+    const g = this.state.selectedGenres;
+    const m = this.state.selectedMoods;
+    if (g && g.length) p.set('genres', g.join(','));
+    if (m && m.length) p.set('moods', m.join(','));
+    if (this.state.mediaType !== 'movies') p.set('type', this.state.mediaType);
+    if (this.lang !== 'de') p.set('lang', this.lang);
+    const qs = p.toString();
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    window.history.replaceState(null, '', url);
   }
 
   // ===== STATE PERSISTENCE =====
@@ -186,6 +235,11 @@ class App {
       this.state = { ...this.state, ...state };
     }
     this.tr = LANG[this.lang] || LANG.de;
+    this._genreMap = getTMDBGenreMap(this.lang);
+    // URL params override localStorage state for shareable links
+    this._applyURLFilters();
+    this.tr = LANG[this.lang] || LANG.de;
+    this._genreMap = getTMDBGenreMap(this.lang);
     this.watchlist = await getWatchlist();
     this.disliked = await getDisliked();
     this.history = await getHistory();
@@ -345,12 +399,12 @@ class App {
         </div>
         <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
       </div>`;
-    app.querySelector('[data-type="books"]')?.addEventListener('click', () => { this.state.mediaType = 'books'; this.render(); });
-    app.querySelector('[data-type="movies"]')?.addEventListener('click', () => { this.state.mediaType = 'movies'; this.render(); });
-    app.querySelector('[data-type="tv"]')?.addEventListener('click', () => { this.state.mediaType = 'tv'; this.render(); });
-    app.querySelector('[data-type="games"]')?.addEventListener('click', () => { this.state.mediaType = 'games'; this.render(); });
-    app.querySelector('[data-lang="de"]')?.addEventListener('click', () => { this.lang = 'de'; this.tr = LANG.de; this.save(); this.render(); });
-    app.querySelector('[data-lang="en"]')?.addEventListener('click', () => { this.lang = 'en'; this.tr = LANG.en; this.save(); this.render(); });
+    app.querySelector('[data-type="books"]')?.addEventListener('click', () => { this.state.mediaType = 'books'; this._syncFiltersToURL(); this.render(); });
+    app.querySelector('[data-type="movies"]')?.addEventListener('click', () => { this.state.mediaType = 'movies'; this._syncFiltersToURL(); this.render(); });
+    app.querySelector('[data-type="tv"]')?.addEventListener('click', () => { this.state.mediaType = 'tv'; this._syncFiltersToURL(); this.render(); });
+    app.querySelector('[data-type="games"]')?.addEventListener('click', () => { this.state.mediaType = 'games'; this._syncFiltersToURL(); this.render(); });
+    app.querySelector('[data-lang="de"]')?.addEventListener('click', () => { this.lang = 'de'; this.tr = LANG.de; this._genreMap = getTMDBGenreMap('de'); this._syncFiltersToURL(); this.save(); this.render(); });
+    app.querySelector('[data-lang="en"]')?.addEventListener('click', () => { this.lang = 'en'; this.tr = LANG.en; this._genreMap = getTMDBGenreMap('en'); this._syncFiltersToURL(); this.save(); this.render(); });
     app.querySelector('.btn-start')?.addEventListener('click', () => {
       this.state.onboardingStep = 1; this.save(); this.render();
     });
@@ -489,7 +543,7 @@ class App {
           <div class="rf-info">
             <h2>${escapeHTML(item.title)}</h2>
             ${item.year ? `<span>${item.year}</span>` : ''}
-            ${item.genres ? `<p class="rf-genres">${item.genres.slice(0,3).map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g)).join(' · ')}</p>` : ''}
+            ${item.genres ? `<p class="rf-genres">${item.genres.slice(0,3).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g)).join(' · ')}</p>` : ''}
           </div>
         </div>
         <div class="swipe-actions rapid-fire-actions">
@@ -522,6 +576,21 @@ class App {
         id: `rf-${g.id}`, title: g.name, year: g.year, cover: '',
         genres: g.tags, source: 'rapid-fire', type: 'game'
       }));
+      return shuffleArray(pool);
+    }
+    if (this.state.mediaType === 'tv') {
+      const pool = [
+        { id:'rf-t1', title:'Stranger Things', year:2016, cover:'', genres:[18,10765,35] },
+        { id:'rf-t2', title:'Breaking Bad', year:2008, cover:'', genres:[18,80,53] },
+        { id:'rf-t3', title:'The Office', year:2005, cover:'', genres:[35] },
+        { id:'rf-t4', title:'Game of Thrones', year:2011, cover:'', genres:[18,10759,10765] },
+        { id:'rf-t5', title:'Black Mirror', year:2011, cover:'', genres:[9648,878,53] },
+        { id:'rf-t6', title:'Dark', year:2017, cover:'', genres:[18,9648,878] },
+        { id:'rf-t7', title:'The Crown', year:2016, cover:'', genres:[18,36] },
+        { id:'rf-t8', title:'Squid Game', year:2021, cover:'', genres:[18,10759,53] },
+        { id:'rf-t9', title:'Succession', year:2018, cover:'', genres:[18,35] },
+        { id:'rf-t10', title:'The Mandalorian', year:2019, cover:'', genres:[10759,878,12] }
+      ];
       return shuffleArray(pool);
     }
     if (this.state.mediaType === 'books') {
@@ -605,6 +674,11 @@ class App {
 
   // ===== SKELETON LOADING =====
   _renderSkeleton(app) {
+    if (this._filterLoading) {
+      // Show a subtle overlay on top of existing cards instead of full skeleton flash
+      app.insertAdjacentHTML('beforeend', `<div class="filter-loading-overlay"><div class="filter-loading-spinner"></div></div>`);
+      return;
+    }
     app.innerHTML = `
       <div class="discover">
         <div class="discover-header">
@@ -655,6 +729,7 @@ class App {
     this._pendingAbort = { abort };
 
     this._renderSkeleton(app);
+    this._filterLoading = false;
 
     try {
       let items;
@@ -667,7 +742,7 @@ class App {
           40
         );
       } else {
-        items = await this.fetchMedia();
+        items = await this.fetchMedia(signal);
       }
 
       if (signal.aborted) return;
@@ -681,7 +756,7 @@ class App {
         filtered = filtered.filter(item => {
           const itemGenres = (item.genres || []).map(g => {
             const id = typeof g === 'number' ? g : g.id || g;
-            return (TMDB_GENRE_MAP[id] || '').toLowerCase();
+            return (this._genreMap[id] || '').toLowerCase();
           });
           return !this.state.blockedGenres.some(bg => itemGenres.includes(bg.toLowerCase()));
         });
@@ -698,29 +773,51 @@ class App {
         this.enrichment.enqueue(filtered);
       }
 
-      // Sort by recommender score (THE KEY FIX)
+      // Sort by recommender score
       const scoredCards = filtered.map(card => ({
         ...card,
         _score: this.recommender.score(card)
       }));
       scoredCards.sort((a, b) => b._score - a._score);
-      // Remove temporary score property
-      const sortedCards = scoredCards.map(({ _score, ...card }) => card);
 
-      // Inject 15% serendipity — random picks from middle tier (not best, not worst)
-      if (sortedCards.length > 10) {
-        const serendipityCount = Math.max(1, Math.floor(sortedCards.length * 0.15));
-        const topEnd = Math.floor(sortedCards.length * 0.4);
-        const bottomStart = Math.floor(sortedCards.length * 0.75);
-        const topCards = sortedCards.slice(0, topEnd);
-        const middlePool = sortedCards.slice(topEnd, bottomStart);
-        const bottomCards = sortedCards.slice(bottomStart);
-        const wildCards = shuffleArray([...middlePool]).slice(0, serendipityCount);
-        const remaining = middlePool.filter(c => !wildCards.includes(c));
-        this.currentCards = [...topCards, ...wildCards, ...remaining, ...bottomCards];
+      // A/B Test: Control (random serendipity) vs treatment (MMR diversity)
+      const diversityCount = filtered.length > 10 ? Math.max(1, Math.floor(filtered.length * 0.15)) : 0;
+      if (diversityCount > 0 && this.experiment.group === 'treatment') {
+        // Treatment: MMR diversity — inject diverse picks near the top
+        const forRerank = scoredCards.map(c => ({ ...c, _mmrScore: c._score }));
+        const reranked = this.recommender.mmrRerank(forRerank, diversityCount);
+        this.currentCards = reranked.map(({ _score, _mmrScore, ...card }) => card);
+      } else if (diversityCount > 0 && this.experiment.group === 'control') {
+        // Control: random serendipity — pick random mid-tier cards to mix up
+        const midStart = Math.floor(scoredCards.length * 0.2);
+        const midEnd = Math.floor(scoredCards.length * 0.6);
+        const midPool = scoredCards.slice(midStart, midEnd);
+        const picks = [];
+        const copy = [...midPool];
+        for (let i = 0; i < Math.min(diversityCount, copy.length); i++) {
+          const idx = Math.floor(Math.random() * copy.length);
+          picks.push(copy.splice(idx, 1)[0]);
+        }
+        // Remove picks from original, then put them back at positions 2, 4, 6...
+        const top = scoredCards.slice(0, 1); // keep #1
+        const rest = scoredCards.slice(1).filter(c => !picks.some(p => p._score === c._score && c.id === p.id));
+        const reorder = [...top];
+        let pi = 0, ri = 0;
+        while (ri < rest.length || pi < picks.length) {
+          if (pi < picks.length && (ri < rest.length ? reorder.length % 3 === 2 : true)) {
+            reorder.push(picks[pi++]);
+          } else if (ri < rest.length) {
+            reorder.push(rest[ri++]);
+          } else break;
+        }
+        this.currentCards = reorder.map(({ _score, ...card }) => card);
       } else {
+        // Remove temporary score property
+        const sortedCards = scoredCards.map(({ _score, ...card }) => card);
         this.currentCards = sortedCards;
       }
+      // Track refetch for experiment metrics
+      this.experiment.trackRefetch();
 
       this.currentCardIndex = 0;
 
@@ -772,11 +869,11 @@ class App {
     });
   }
 
-  async fetchMedia() {
+  async fetchMedia(signal) {
     const type = this.state.mediaType === 'movies' ? 'movie' : 'tv';
     const genreIds = this.state.selectedGenres.map(g => typeof g === 'string' ? g : g.id).join(',');
     try {
-      const r = await fetch(`/proxy/tmdb/discover/${type}?sort_by=popularity.desc&with_genres=${genreIds || ''}&language=${this.lang}`);
+      const r = await fetch(`/proxy/tmdb/discover/${type}?sort_by=popularity.desc&with_genres=${genreIds || ''}&language=${this.lang}`, { signal });
       if (!r.ok) return [];
       const data = await r.json();
       return (data.results || []).map(m => ({
@@ -786,7 +883,58 @@ class App {
         overview: m.overview, genres: m.genre_ids, source: 'tmdb', type,
         rating: m.vote_average, vote_count: m.vote_count
       }));
-    } catch (e) { console.warn('fetchMedia error', e); return []; }
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      console.warn('fetchMedia error', e); return [];
+    }
+  }
+
+  // ===== GENRE/MOOD FILTER CHIPS =====
+  _getFilterOptions() {
+    const type = this.state.mediaType;
+    const lang = this.lang;
+    if (type === 'books') {
+      return {
+        genres: BOOK_GENRES[lang] || BOOK_GENRES.en,
+        moods: BOOK_MOODS[lang] || BOOK_MOODS.en
+      };
+    }
+    if (type === 'games') {
+      return {
+        genres: (GAME_GENRES[lang] || GAME_GENRES.en).map(g => ({ id: g.id, label: g.name })),
+        moods: GAME_MOODS[lang] || GAME_MOODS.en
+      };
+    }
+    const mediaGenres = MEDIA_GENRES[lang] || MEDIA_GENRES.en;
+    return {
+      genres: mediaGenres[type] || mediaGenres.movie,
+      moods: MEDIA_MOODS[lang] || MEDIA_MOODS.en
+    };
+  }
+
+  _renderFilterChipsHtml() {
+    const filters = this._getFilterOptions();
+    const selectedGenres = this.state.selectedGenres || [];
+    const selectedMoods = this.state.selectedMoods || [];
+    const hasActiveFilters = selectedGenres.length > 0 || selectedMoods.length > 0;
+
+    const genreChips = filters.genres.map(g => {
+      const isSelected = selectedGenres.includes(g.id);
+      return `<button class="filter-chip${isSelected ? ' active' : ''}" data-type="genre" data-id="${g.id}">${g.label}</button>`;
+    }).join('');
+
+    const moodChips = filters.moods.map(m => {
+      const isSelected = selectedMoods.includes(m.id);
+      const icon = m.icon || '';
+      return `<button class="filter-chip mood-chip${isSelected ? ' active' : ''}" data-type="mood" data-id="${m.id}">${icon ? icon + ' ' : ''}${m.label}</button>`;
+    }).join('');
+
+    return `
+      <div class="filter-chips">
+        <div class="filter-scroll">${genreChips}</div>
+        ${moodChips ? `<div class="filter-scroll filter-moods">${moodChips}</div>` : ''}
+        ${hasActiveFilters ? `<button class="filter-clear" data-action="clear-filters">✕ ${this.lang === 'de' ? 'Filter zurücksetzen' : 'Clear filters'}</button>` : ''}
+      </div>`;
   }
 
   // ===== CARD RENDERING =====
@@ -800,8 +948,36 @@ class App {
     const t = isGame ? '🎮' : card.type === 'movie' ? 'Film' : card.type === 'tv' ? 'Serie' : 'Buch';
     const genreStr = isGame
       ? (card.genres || []).join(', ')
-      : (card.genres || []).map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g)).join(', ');
-    const dnaTags = this._getCardDNATags(card);
+      : (card.genres || []).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g)).join(', ');
+
+    // ---- Filter Bubble Breaker: pick a wildcard when in Blind Date mode ----
+    let wildcard = null;
+    let wildcardHook = '';
+    let wildcardMood = '';
+    let wildcardPacing = '';
+    let wildcardTropes = [];
+    let wildcardGenre = '';
+    let wildcardBridge = '';
+    if (isBlind && !isBlindGame && this.recommender && this.currentCards.length >= 3) {
+      // Wildcard Frequency: probabilistically decide whether to show a wildcard
+      const freq = this.state.wildcardFrequency ?? 50;
+      // If frequency is 0, never show wildcards; if 100, always show them
+      const showWildcard = freq >= 100 || (freq > 0 && Math.random() * 100 < freq);
+      if (showWildcard) {
+        wildcard = this.recommender.pickWildcard(this.currentCards);
+        if (wildcard) {
+          wildcardHook = wildcard.the_hook;
+          wildcardMood = wildcard.revealed_traits.mood;
+          wildcardPacing = wildcard.revealed_traits.pacing;
+          wildcardTropes = wildcard.revealed_traits.micro_tropes;
+          wildcardGenre = wildcard.actual_genre;
+          wildcardBridge = wildcard.the_bridge;
+        }
+      }
+    }
+    this._currentWildcard = wildcard; // store for peek/card modal access
+
+    const dnaTags = wildcardTropes.length ? wildcardTropes : this._getCardDNATags(card);
     const coverStyle = isBlind ? 'filter:blur(20px);transform:scale(1.1);' : '';
     let cardClass = 'card';
     if (isBlind) cardClass += ' blind-date-card';
@@ -823,7 +999,20 @@ class App {
           <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
           </button>
+          ${isBlind ? `
+            <div class="wildcard-freq-row">
+              <span class="wildcard-freq-label">${this.lang === 'de' ? 'Wildcards:' : 'Wildcards:'}</span>
+              ${[0, 25, 50, 75, 100].map(v => {
+                const labels = this.lang === 'de'
+                  ? { 0: 'Nie', 25: 'Selten', 50: 'Manchmal', 75: 'Oft', 100: 'Immer' }
+                  : { 0: 'Never', 25: 'Rarely', 50: 'Sometimes', 75: 'Often', 100: 'Always' };
+                const icons = { 0: '🚫', 25: '🔹', 50: '🔸', 75: '🔶', 100: '✨' };
+                return `<button class="wildcard-freq-chip ${(this.state.wildcardFrequency ?? 50) === v ? 'active' : ''}" data-freq="${v}">${icons[v]} ${labels[v]}</button>`;
+              }).join('')}
+            </div>
+          ` : ''}
         </div>
+        ${this._renderFilterChipsHtml()}
         <div class="card-stack">
           <div class="${cardClass}" data-id="${escapeHTML(card.id)}">
             ${card.cover ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.cover)}" alt="${escapeHTML(card.title)}">` : `<div class="card-cover placeholder">${isGame ? '🎮' : '📚'}</div>`}
@@ -837,7 +1026,18 @@ class App {
                 </div>
               </div>
             ` : ''}
-            ${isBlind && !isGame && dnaTags.length ? `<div class="blind-tags">${dnaTags.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}
+            ${isBlind && !isGame ? `
+              ${wildcard ? `
+                <div class="wildcard-badge">🎲 ${this.lang === 'de' ? 'Wildcard' : 'Wildcard'}</div>
+                <div class="blind-tags wildcard-traits">
+                  <span class="blind-tag wildcard-mood">🎭 ${escapeHTML(wildcardMood)}</span>
+                  <span class="blind-tag wildcard-pacing">⏱ ${escapeHTML(wildcardPacing)}</span>
+                </div>
+                ${wildcardTropes.length ? `<div class="blind-tags">${wildcardTropes.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}
+              ` : `
+                ${dnaTags.length ? `<div class="blind-tags">${dnaTags.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}
+              `}
+            ` : ''}
             ${isGame && !isBlindGame ? `
               <div class="game-card-badges">
                 ${platformBadges}
@@ -852,7 +1052,8 @@ class App {
               ${card.rating && !isBlindGame ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
               ${genreStr && !isBlind ? `<p class="card-genres">${escapeHTML(genreStr)}</p>` : ''}
               ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview.slice(0, 120))}${card.overview.length > 120 ? '...' : ''}</p>` : ''}
-              ${isBlind && !isBlindGame && card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : ''}
+              ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
+              ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
             </div>
             <span class="swipe-hint swipe-hint-like">${this.tr.like}</span>
             <span class="swipe-hint swipe-hint-nope">${this.tr.nope}</span>
@@ -891,6 +1092,48 @@ class App {
       this.save();
       this.renderCards(app);
     });
+    app.querySelectorAll('.wildcard-freq-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const freq = parseInt(chip.dataset.freq, 10);
+        if (!isNaN(freq)) {
+          this.state.wildcardFrequency = freq;
+          this.save();
+          this.renderCards(app);
+        }
+      });
+    });
+    // Filter chip click handlers
+    app.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const type = chip.dataset.type;
+        const id = type === 'genre' ? parseInt(chip.dataset.id) || chip.dataset.id : chip.dataset.id;
+        const arr = type === 'genre' ? this.state.selectedGenres : this.state.selectedMoods;
+        if (!arr) return;
+        const idx = arr.indexOf(id);
+        if (idx >= 0) {
+          arr.splice(idx, 1);
+          chip.classList.remove('active');
+        } else {
+          arr.push(id);
+          chip.classList.add('active');
+        }
+        this._syncFiltersToURL();
+        this.save();
+        // Keep current cards visible while re-fetching — show loading overlay instead of skeleton flash
+        this._filterLoading = true;
+        this.renderDiscover(document.getElementById('app'));
+      });
+    });
+    // Clear filters button
+    app.querySelector('[data-action="clear-filters"]')?.addEventListener('click', () => {
+      this.state.selectedGenres = [];
+      this.state.selectedMoods = [];
+      this._syncFiltersToURL();
+      this.save();
+      this._filterLoading = true;
+      this.renderDiscover(document.getElementById('app'));
+    });
+
     app.querySelector('.search-toggle')?.addEventListener('click', () => this._showSearch(app));
     app.querySelector('.card-info-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -902,24 +1145,31 @@ class App {
     });
     this._bindNav(app);
 
-    // Long-press to show feedback modal
+    // Long-press to show peek overlay
     this._setupLongPress(cardEl, card);
   }
 
-  // ===== LONG PRESS FOR EXPLICIT FEEDBACK =====
+  // ===== PEEK OVERLAY (long-press quick summary) =====
   _setupLongPress(cardEl, card) {
     let pressTimer = null;
+    let peekShown = false;
     let startX = 0;
     let startY = 0;
 
     const startPress = (e) => {
-      if (this.swipeEngine?.swiping) return;
+      if (this.swipeEngine?.isSwiping) return;
+      if (document.querySelector('.peek-overlay')) return;
       const touch = e.touches ? e.touches[0] : e;
       startX = touch.clientX;
       startY = touch.clientY;
+      peekShown = false;
       pressTimer = setTimeout(() => {
-        this._showFeedbackModal(card);
-      }, 800);
+        peekShown = true;
+        this._showPeekOverlay(card);
+        // Reset timer so we don't also trigger the feedback modal
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }, 400);
     };
 
     const cancelPress = (e) => {
@@ -927,14 +1177,33 @@ class App {
         clearTimeout(pressTimer);
         pressTimer = null;
       }
+      // If peek is shown, dismiss it on release
+      if (peekShown) {
+        peekShown = false;
+        const overlay = document.querySelector('.peek-overlay');
+        if (overlay) {
+          overlay.classList.remove('open');
+          setTimeout(() => overlay.remove(), 300);
+        }
+      }
     };
 
     const moveCancel = (e) => {
-      if (!pressTimer) return;
+      if (!pressTimer && !peekShown) return;
       const touch = e.touches ? e.touches[0] : e;
       const dx = Math.abs(touch.clientX - startX);
       const dy = Math.abs(touch.clientY - startY);
-      if (dx > 10 || dy > 10) cancelPress();
+      if (dx > 10 || dy > 10) {
+        if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+        if (peekShown) {
+          peekShown = false;
+          const overlay = document.querySelector('.peek-overlay');
+          if (overlay) {
+            overlay.classList.remove('open');
+            setTimeout(() => overlay.remove(), 300);
+          }
+        }
+      }
     };
 
     cardEl.addEventListener('touchstart', startPress, { passive: true });
@@ -945,55 +1214,308 @@ class App {
     cardEl.addEventListener('mouseleave', cancelPress);
   }
 
+  _showPeekOverlay(card) {
+    // Remove any existing peek
+    const existing = document.querySelector('.peek-overlay');
+    if (existing) existing.remove();
+
+    const isGame = card.type === 'game' || card.source === 'igdb';
+    const de = this.lang === 'de';
+
+    // Build summary from overview (first 2 sentences)
+    let summary = '';
+    if (card.overview) {
+      const parts = card.overview.split(/(?<=[.!?])\s+/);
+      summary = parts.slice(0, 2).join(' ');
+    }
+
+    // Build DNA tags / key themes
+    const dna = card.mediaDNA || {};
+    const themes = [];
+    if (dna.tropes) themes.push(...dna.tropes.slice(0, 2));
+    if (dna.pacing) themes.push(...dna.pacing.slice(0, 1));
+    if (dna.aesthetic) themes.push(...dna.aesthetic.slice(0, 1));
+
+    // Use card DNA tags as fallback
+    const dnaTags = themes.length ? themes : this._getCardDNATags(card);
+
+    const genreStr = isGame
+      ? (card.genres || []).join(', ')
+      : (card.genres || []).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g)).join(', ');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'peek-overlay';
+    overlay.innerHTML = `
+      <div class="peek-card">
+        <div class="peek-header">
+          <div class="peek-title-row">
+            <h3 class="peek-title">${escapeHTML(card.title)}</h3>
+            <button class="peek-close" data-action="peek-close" aria-label="Close">✕</button>
+          </div>
+          <div class="peek-meta">
+            ${card.year ? `<span class="peek-year">${card.year}</span>` : ''}
+            ${card.rating ? `<span class="peek-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
+            ${genreStr ? `<span class="peek-genres">${escapeHTML(genreStr)}</span>` : ''}
+          </div>
+        </div>
+        ${summary ? `<p class="peek-summary">${escapeHTML(summary)}</p>` : ''}
+        ${dnaTags.length ? `
+          <div class="peek-tags">
+            ${dnaTags.slice(0, 4).map(t => `<span class="peek-tag">${escapeHTML(t)}</span>`).join('')}
+          </div>
+        ` : ''}
+        ${this._renderPeekMatchDNA(card)}
+        <div class="peek-actions">
+          <button class="btn btn-sm btn-nope peek-nope" data-action="peek-nope" title="${this.tr.nope}">✕ ${de ? 'Nein' : 'Nope'}</button>
+          <button class="btn btn-sm peek-info" data-action="peek-info" title="${this.tr.whySeeing}">ℹ️ ${de ? 'Details' : 'Details'}</button>
+          <button class="btn btn-sm peek-like" data-action="peek-like" title="${this.tr.like}">♥ ${de ? 'Mag ich' : 'Like'}</button>
+        </div>
+        <button class="btn btn-sm peek-why-not" data-action="peek-why-not" title="${de ? 'Warum nicht?' : 'Why not?'}">💬 ${de ? 'Warum nicht?' : 'Why not?'}</button>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    // Dismiss on backdrop click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('[data-action="peek-close"]')) {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      }
+    });
+
+    // Like button
+    overlay.querySelector('[data-action="peek-like"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.classList.remove('open');
+      setTimeout(() => { overlay.remove(); this.handleSwipe('right'); }, 300);
+    });
+
+    // Nope button
+    overlay.querySelector('[data-action="peek-nope"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.classList.remove('open');
+      setTimeout(() => { overlay.remove(); this.handleSwipe('left'); }, 300);
+    });
+
+    // Info button — opens full card modal
+    overlay.querySelector('[data-action="peek-info"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.classList.remove('open');
+      setTimeout(() => {
+        overlay.remove();
+        const app = document.getElementById('app');
+        this._showCardModal(card, app);
+      }, 300);
+    });
+
+    // Why not? button — opens explicit feedback modal
+    overlay.querySelector('[data-action="peek-why-not"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.classList.remove('open');
+      setTimeout(() => {
+        overlay.remove();
+        this._showFeedbackModal(card);
+      }, 300);
+    });
+
+    // Escape key dismiss
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+  }
+
+  // ===== EXPLICIT FEEDBACK MODAL (triggered from peek "Why not?" button) =====
   _showFeedbackModal(card) {
+    const de = this.lang === 'de';
     const overlay = document.createElement('div');
     overlay.className = 'feedback-overlay';
     overlay.innerHTML = `
       <div class="feedback-modal">
-        <h3>${this.t('feedbackTitle')}</h3>
+        <h3>💬 ${de ? 'Warum interessiert dich das nicht?' : 'Why are you not interested?'}</h3>
         <p>${escapeHTML(card.title)}</p>
         <div class="feedback-options">
-          <button class="feedback-btn" data-reason="seen"><span class="feedback-icon">👀</span> ${this.t('seenIt')}</button>
-          <button class="feedback-btn" data-reason="mood"><span class="feedback-icon">🎭</span> ${this.t('wrongMood')}</button>
-          <button class="feedback-btn" data-reason="genre"><span class="feedback-icon">🚫</span> ${this.t('notMyGenre')}</button>
-          <button class="feedback-btn" data-reason="other"><span class="feedback-icon">💬</span> ${this.t('otherReason')}</button>
+          <button class="feedback-btn" data-reason="seen">👁️ ${this.tr.seenIt}</button>
+          <button class="feedback-btn" data-reason="mood">🎭 ${this.tr.wrongMood}</button>
+          <button class="feedback-btn" data-reason="genre">📚 ${this.tr.notMyGenre}</button>
+          <button class="feedback-btn" data-reason="other">💡 ${this.tr.otherReason}</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('open'));
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 400);
-      }
-    });
 
     overlay.querySelectorAll('.feedback-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const reason = btn.dataset.reason;
         this._applyExplicitFeedback(card, reason);
         overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 400);
+        setTimeout(() => overlay.remove(), 300);
       });
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      }
     });
   }
 
   _applyExplicitFeedback(card, reason) {
-    // Boost anti-taste for this genre
-    if (reason === 'genre' && card.genres) {
-      card.genres.forEach(g => {
-        const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
-        this.recommender.profile.genreWeights[name] = (this.recommender.profile.genreWeights[name] || 0) - 3;
+    // Feed explicit reasons into the recommender profile for better future predictions
+    if (reason === 'seen' || reason === 'mood' || reason === 'genre') {
+      const signals = {
+        seen: { genrePenalty: 0.2 },
+        mood: { genrePenalty: 0.1 },
+        genre: { genrePenalty: 0.6 }
+      };
+      // Directly weaken genre weights in the recommender's profile
+      (card.genres || []).forEach(g => {
+        const genre = (typeof g === 'string' ? g : (this._genreMap[g] || g));
+        if (genre && this.recommender.profile) {
+          const cur = this.recommender.profile.genreWeights[genre] || 0;
+          this.recommender.profile.genreWeights[genre] = cur - signals[reason].genrePenalty;
+        }
       });
       this.recommender._saveProfile();
+      this.recommender.cache.clear();
     }
-    // Auto-swipe left
+    // Nope the card after feedback
     this.handleSwipe('left');
-    showToast(this.lang === 'de' ? 'Verstanden — wir passen die Empfehlungen an' : 'Got it — adjusting recommendations', {
-      type: 'info',
-      duration: 2000,
-    });
+  }
+
+  // ===== DAYLIST (Contextual Curation Engine) =====
+  _showDaylist(app) {
+    const de = this.lang === 'de';
+    const items = this.currentCards.filter(c => c);
+
+    if (!items.length) {
+      showToast(de ? 'Keine Karten zum Kuratieren' : 'No cards to curate', { type: 'warning', duration: 2000 });
+      return;
+    }
+
+    // Snapshot of current items for cache validation
+    const itemsSnapshot = {
+      count: items.length,
+      ids: items.map(i => i.id).sort().join(','),
+    };
+
+    // Ask for energy level via a quick in-overlay toggle
+    let energyLevel = null;
+
+    const renderOverlay = (energy, precomputedDaylist) => {
+      let daylist;
+      if (precomputedDaylist) {
+        daylist = precomputedDaylist;
+      } else {
+        daylist = this.recommender.generateDaylist(items, { energyLevel: energy });
+        if (!daylist || !daylist.media_queue || !daylist.media_queue.length) {
+          showToast(de ? 'Konnte keine Tagesliste erstellen' : 'Could not generate daylist', { type: 'warning', duration: 2000 });
+          return;
+        }
+        // Cache the freshly generated daylist
+        safeSetJSON('bs-daylist-cache', {
+          daylist,
+          energyLevel: energy,
+          itemsSnapshot,
+          timestamp: Date.now(),
+        });
+      }
+
+      const existing = document.querySelector('.daylist-overlay');
+      if (existing) existing.remove();
+
+      const overlay = document.createElement('div');
+      overlay.className = 'daylist-overlay';
+      overlay.innerHTML = `
+        <div class="daylist-modal">
+          <button class="daylist-close" data-action="daylist-close">✕</button>
+          <div class="daylist-header">
+            <div class="daylist-icon">📋</div>
+            <h2 class="daylist-title">${escapeHTML(daylist.queue_title)}</h2>
+            <p class="daylist-vibe">${escapeHTML(daylist.vibe_description)}</p>
+          </div>
+          <div class="daylist-meta">
+            <span class="daylist-time">⏱ ${escapeHTML(daylist.estimated_total_time)}</span>
+          </div>
+          <div class="daylist-rules">
+            ${daylist.contextual_rules_applied.map(r => `<span class="daylist-rule">${escapeHTML(r)}</span>`).join('')}
+          </div>
+          <div class="daylist-energy-prompt">
+            <span class="daylist-energy-label">${de ? 'Energie-Level:' : 'Energy Level:'}</span>
+            <div class="daylist-energy-options">
+              <button class="daylist-energy-btn ${energy === null ? 'active' : ''}" data-energy="null">${de ? '⚖️ Auto' : '⚖️ Auto'}</button>
+              <button class="daylist-energy-btn ${energy === 'low' ? 'active' : ''}" data-energy="low">😴 ${de ? 'Müde' : 'Tired'}</button>
+              <button class="daylist-energy-btn ${energy === 'medium' ? 'active' : ''}" data-energy="medium">💪 ${de ? 'OK' : 'Good'}</button>
+              <button class="daylist-energy-btn ${energy === 'high' ? 'active' : ''}" data-energy="high">⚡ ${de ? 'Voller Energie' : 'Energetic'}</button>
+            </div>
+          </div>
+          <div class="daylist-queue">
+            ${daylist.media_queue.map((item, i) => `
+              <div class="daylist-item">
+                <div class="daylist-item-rank">${i + 1}</div>
+                <div class="daylist-item-info">
+                  <strong class="daylist-item-title">${escapeHTML(item.title)}</strong>
+                  ${item.author ? `<span class="daylist-item-author">${escapeHTML(item.author)}</span>` : ''}
+                  <span class="daylist-item-format">${escapeHTML(item.format)}</span>
+                  <p class="daylist-item-why">${escapeHTML(item.why_right_now)}</p>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('open'));
+
+      overlay.querySelector('[data-action="daylist-close"]')?.addEventListener('click', () => {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      });
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          overlay.classList.remove('open');
+          setTimeout(() => overlay.remove(), 300);
+        }
+      });
+
+      overlay.querySelectorAll('.daylist-energy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.energy;
+          energyLevel = val === 'null' ? null : val;
+          renderOverlay(energyLevel);
+        });
+      });
+
+      const escHandler = (e) => {
+        if (e.key === 'Escape') {
+          const o = document.querySelector('.daylist-overlay');
+          if (o) { o.classList.remove('open'); setTimeout(() => o.remove(), 300); }
+          document.removeEventListener('keydown', escHandler);
+        }
+      };
+      document.addEventListener('keydown', escHandler);
+    };
+
+    // Check localStorage for a cached daylist (same deck, < 30 min old)
+    const cache = safeGetJSON('bs-daylist-cache', null);
+    const cacheValid = cache && cache.daylist && cache.itemsSnapshot &&
+      cache.itemsSnapshot.count === itemsSnapshot.count &&
+      cache.itemsSnapshot.ids === itemsSnapshot.ids &&
+      (Date.now() - (cache.timestamp || 0)) < 30 * 60 * 1000;
+
+    if (cacheValid) {
+      energyLevel = cache.energyLevel;
+      renderOverlay(cache.energyLevel, cache.daylist);
+    } else {
+      renderOverlay(null, null);
+    }
   }
 
   // ===== SWIPE HANDLING =====
@@ -1028,6 +1550,9 @@ class App {
     } else {
       await addToHistory({ ...card, action: 'skip', date: new Date().toISOString() });
     }
+
+    // Track swipe in experiment
+    this.experiment.trackSwipe({ direction: dir, item: card });
 
     this.currentCardIndex++;
     await this.save();
@@ -1293,6 +1818,7 @@ class App {
           ` : ''}
           ${card.overview ? `<p class="modal-overview">${escapeHTML(card.overview)}</p>` : ''}
           ${this._renderWhySeeing(card)}
+          ${this._renderMatchDNA(card)}
           ${this._renderCrossMediaSuggestions(card)}
           ${isGame ? this._renderStoreButtons(card) : this._renderStreamingButtons(card)}
           <div class="modal-actions">
@@ -1345,14 +1871,14 @@ class App {
       const likedGenres = {};
       this.watchlist.forEach(w => {
         (w.genres || []).forEach(g => {
-          const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+          const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
           likedGenres[name] = (likedGenres[name] || 0) + 1;
         });
       });
       const matchingGenres = (card.genres || []).filter(g => {
-        const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+        const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
         return likedGenres[name] >= 2;
-      }).map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g));
+      }).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g));
       if (matchingGenres.length) {
         // Find the most similar liked item
         let bestMatch = null;
@@ -1360,8 +1886,8 @@ class App {
         this.watchlist.forEach(w => {
           const overlap = (w.genres || []).filter(g1 =>
             (card.genres || []).some(g2 => {
-              const n1 = typeof g1 === 'string' ? g1 : (TMDB_GENRE_MAP[g1] || g1);
-              const n2 = typeof g2 === 'string' ? g2 : (TMDB_GENRE_MAP[g2] || g2);
+              const n1 = typeof g1 === 'string' ? g1 : (this._genreMap[g1] || g1);
+              const n2 = typeof g2 === 'string' ? g2 : (this._genreMap[g2] || g2);
               return n1 === n2;
             })
           ).length;
@@ -1404,6 +1930,101 @@ class App {
       </div>`;
   }
 
+  // ===== COMPACT MATCH DNA FOR PEEK OVERLAY =====
+  _renderPeekMatchDNA(card) {
+    try {
+      const dna = this.recommender.generateMatchDNA(card);
+      if (!dna || !dna.dna_breakdown || !dna.dna_breakdown.length) return '';
+
+      const pct = dna.overall_match_percentage;
+      let color = '#ef4444';
+      let label = this.lang === 'de' ? 'Schlecht' : 'Poor';
+      if (pct >= 80) { color = '#22c55e'; label = this.lang === 'de' ? 'Perfekt' : 'Perfect'; }
+      else if (pct >= 60) { color = '#4ecdc4'; label = this.lang === 'de' ? 'Gut' : 'Good'; }
+      else if (pct >= 40) { color = '#f59e0b'; label = this.lang === 'de' ? 'Okay' : 'Okay'; }
+
+      const top = dna.dna_breakdown.slice(0, 2);
+
+      return `
+        <div class="peek-dna-section">
+          <div class="peek-dna-header">
+            <span class="peek-dna-label">🧬 ${this.lang === 'de' ? 'Trefferquote' : 'Match'}</span>
+            <span class="peek-dna-pct" style="color:${color}">${pct}% ${escapeHTML(label)}</span>
+          </div>
+          ${dna.hook ? `<p class="peek-dna-hook">${escapeHTML(dna.hook)}</p>` : ''}
+          <div class="peek-dna-bars">
+            ${top.map(b => {
+              const barColor = b.score >= 80 ? '#22c55e' : b.score >= 60 ? '#4ecdc4' : b.score >= 40 ? '#f59e0b' : '#ef4444';
+              return `
+                <div class="peek-dna-bar">
+                  <div class="peek-dna-bar-label">
+                    <span>${escapeHTML(b.category)}</span>
+                    <span class="peek-dna-bar-score">${b.score}%</span>
+                  </div>
+                  <div class="peek-dna-bar-track">
+                    <div class="peek-dna-bar-fill" style="width:${b.score}%;background:${barColor}"></div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>`;
+    } catch (e) {
+      console.warn('Peek DNA error:', e);
+      return '';
+    }
+  }
+
+  // ===== MATCH DNA VISUAL BREAKDOWN =====
+  _renderMatchDNA(card) {
+    try {
+      const dna = this.recommender.generateMatchDNA(card);
+      if (!dna || !dna.dna_breakdown || !dna.dna_breakdown.length) return '';
+
+      const pct = dna.overall_match_percentage;
+      let color = '#ef4444'; // red
+      let label = this.lang === 'de' ? 'Schlecht' : 'Poor';
+      if (pct >= 80) { color = '#22c55e'; label = this.lang === 'de' ? 'Perfekt' : 'Perfect'; }
+      else if (pct >= 60) { color = '#4ecdc4'; label = this.lang === 'de' ? 'Gut' : 'Good'; }
+      else if (pct >= 40) { color = '#f59e0b'; label = this.lang === 'de' ? 'Okay' : 'Okay'; }
+
+      return `
+        <div class="match-dna-section">
+          <div class="match-dna-header">
+            <h3>🧬 ${this.lang === 'de' ? 'Match-DNA' : 'Match DNA'}</h3>
+            <div class="match-dna-ring" style="--dna-color:${color};--dna-pct:${pct}">
+              <svg viewBox="0 0 36 36" class="dna-ring-svg">
+                <path class="dna-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                <path class="dna-ring-fill" stroke-dasharray="${pct}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+              </svg>
+              <span class="dna-ring-text">${pct}%</span>
+            </div>
+          </div>
+          <p class="match-dna-hook">${escapeHTML(dna.hook)}</p>
+          <div class="dna-bars">
+            ${dna.dna_breakdown.map(b => {
+              const barColor = b.score >= 80 ? '#22c55e' : b.score >= 60 ? '#4ecdc4' : b.score >= 40 ? '#f59e0b' : '#ef4444';
+              return `
+                <div class="dna-bar-row">
+                  <div class="dna-bar-label">
+                    <span>${escapeHTML(b.category)}</span>
+                    <span class="dna-bar-score">${b.score}%</span>
+                  </div>
+                  <div class="dna-bar-track">
+                    <div class="dna-bar-fill" style="width:${b.score}%;background:${barColor}"></div>
+                  </div>
+                  <p class="dna-bar-reason">${escapeHTML(b.reason)}</p>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>`;
+    } catch (e) {
+      console.warn('Match DNA error:', e);
+      return '';
+    }
+  }
+
   // ===== CROSS-MEDIA RECOMMENDATIONS =====
   _renderCrossMediaSuggestions(card) {
     if (!card.genres || !card.genres.length) return '';
@@ -1412,7 +2033,7 @@ class App {
     if (!mappings) return '';
 
     const suggestions = [];
-    const sourceGenres = card.genres.map(g => typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g));
+    const sourceGenres = card.genres.map(g => typeof g === 'string' ? g : (this._genreMap[g] || g));
 
     // Build simple cross-media suggestions from watchlist
     if (this.watchlist.length >= 3) {
@@ -1642,6 +2263,7 @@ class App {
   _navHTML(active) {
     return `<nav class="bottom-nav">
       <button class="nav-btn${active==='discover'?' active':''}" data-view="discover">🔍 ${this.tr.discover}</button>
+      <button class="nav-btn${active==='daylist'?' active':''}" data-view="daylist">📋 ${this.lang === 'de' ? 'Heute' : 'Today'}</button>
       <button class="nav-btn${active==='watchlist'?' active':''}" data-view="watchlist">📝 ${this.watchlist.length}</button>
       <button class="nav-btn${active==='history'?' active':''}" data-view="history">📖</button>
       <button class="nav-btn${active==='stats'?' active':''}" data-view="stats">📊</button>
@@ -1653,9 +2275,16 @@ class App {
     });
   }
   renderView(view, app) {
+    // Dismiss any open daylist overlay when navigating to another tab
+    const daylistOverlay = document.querySelector('.daylist-overlay');
+    if (daylistOverlay && view !== 'daylist') {
+      daylistOverlay.classList.remove('open');
+      setTimeout(() => daylistOverlay.remove(), 300);
+    }
     if (view === 'watchlist') return this.renderWatchlist(app);
     if (view === 'history') return this.renderHistory(app);
     if (view === 'stats') return this.renderStats(app);
+    if (view === 'daylist') return this._showDaylist(app);
     this.renderDiscover(app);
   }
 
@@ -1801,7 +2430,7 @@ class App {
     this.watchlist.forEach(w => {
       const gList = w.genres || [];
       gList.forEach(g => {
-        const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+        const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
         genres[name] = (genres[name] || 0) + 1;
       });
     });
@@ -1837,7 +2466,7 @@ class App {
               </div>
             `).join('')}
           </div>
-        </div>
+        ${this._renderExperimentStats()}
         <div class="stat-grid">
           <div class="stat"><span class="stat-num">${total}</span><span class="stat-label">${this.lang === 'de' ? 'Bewertet' : 'Rated'}</span></div>
           <div class="stat"><span class="stat-num">${liked}</span><span class="stat-label">❤️</span></div>
@@ -1852,8 +2481,78 @@ class App {
         <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
         ${this._navHTML('stats')}
       </div>`;
+    // Experiment switch/reset handlers
+    app.querySelector('[data-action="switch-experiment-group"]')?.addEventListener('click', () => {
+      const newGroup = this.experiment.group === 'treatment' ? 'control' : 'treatment';
+      this.experiment.switchGroup(newGroup);
+      showToast(
+        this.lang === 'de'
+          ? `Gruppe gewechselt zu: ${newGroup === 'treatment' ? 'MMR Diversity' : 'Zufalls-Serendipity'}`
+          : `Switched to: ${newGroup === 'treatment' ? 'MMR Diversity' : 'Random Serendipity'}`,
+        { type: 'info', duration: 2500 }
+      );
+      this.renderStats(app);
+    });
+    app.querySelector('[data-action="reset-experiment"]')?.addEventListener('click', () => {
+      this.experiment.reset();
+      showToast(
+        this.lang === 'de'
+          ? 'Experiment zurückgesetzt — neue Gruppe: ' + (this.experiment.group === 'treatment' ? 'MMR Diversity' : 'Zufalls-Serendipity')
+          : 'Experiment reset — new group: ' + (this.experiment.group === 'treatment' ? 'MMR Diversity' : 'Random Serendipity'),
+        { type: 'info', duration: 2500 }
+      );
+      this.renderStats(app);
+    });
     app.querySelector('.btn-back')?.addEventListener('click', () => this.renderDiscover(app));
     this._bindNav(app);
+  }
+
+  _renderExperimentStats() {
+    const m = this.experiment.getMetrics();
+    const de = this.lang === 'de';
+    const groupLabel = m.group === 'treatment' ? 'MMR Diversity' : 'Random Serendipity';
+    return `
+      <div class="experiment-card">
+        <h3>🧪 ${de ? 'A/B Test' : 'A/B Test'}: ${m.experiment}</h3>
+        <div class="experiment-meta">
+          <span class="experiment-group ${m.group}">${groupLabel}</span>
+          <span class="experiment-sessions">${m.sessionCount} ${de ? 'Sitzungen' : 'sessions'}</span>
+        </div>
+        <div class="experiment-metrics">
+          <div class="exp-metric">
+            <span class="exp-metric-value">${m.totalSwipes}</span>
+            <span class="exp-metric-label">${de ? 'Wischaktionen' : 'Swipes'}</span>
+          </div>
+          <div class="exp-metric">
+            <span class="exp-metric-value">${(m.likeRate * 100).toFixed(0)}%</span>
+            <span class="exp-metric-label">${de ? 'Gefällt mir Rate' : 'Like rate'}</span>
+          </div>
+          <div class="exp-metric">
+            <span class="exp-metric-value">${(m.genreDiversity * 100).toFixed(0)}%</span>
+            <span class="exp-metric-label">${de ? 'Genre-Vielfalt' : 'Genre diversity'}</span>
+          </div>
+          <div class="exp-metric">
+            <span class="exp-metric-value">${m.avgSwipesPerDeck.toFixed(1)}</span>
+            <span class="exp-metric-label">${de ? 'Pro Deck' : 'Per deck'}</span>
+          </div>
+          <div class="exp-metric">
+            <span class="exp-metric-value">${m.avgSessionDurationSec.toFixed(0)}s</span>
+            <span class="exp-metric-label">${de ? 'Mittl. Sitzung' : 'Avg session'}</span>
+          </div>
+          <div class="exp-metric">
+            <span class="exp-metric-value">${m.totalLikes}</span>
+            <span class="exp-metric-label">❤️</span>
+          </div>
+        </div>
+        <div class="experiment-actions">
+          <button class="btn btn-sm exp-btn exp-btn-switch" data-action="switch-experiment-group">
+            🔄 ${de ? 'Wechseln zu' : 'Switch to'} ${m.group === 'treatment' ? de ? 'Zufall' : 'Random' : de ? 'MMR' : 'MMR'}
+          </button>
+          <button class="btn btn-sm exp-btn exp-btn-reset" data-action="reset-experiment">
+            🗑 ${de ? 'Zurücksetzen' : 'Reset'}
+          </button>
+        </div>
+      </div>`;
   }
 
   _getPersonaBadge() {
@@ -1861,7 +2560,7 @@ class App {
     if (liked.length < 3) return this.lang === 'de' ? 'Neuling' : 'Newcomer';
     const genres = {};
     liked.forEach(h => (h.genres || []).forEach(g => {
-      const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+      const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
       genres[name] = (genres[name] || 0) + 1;
     }));
     const top = Object.entries(genres).sort((a, b) => b[1] - a[1])[0];
@@ -1882,7 +2581,7 @@ class App {
     if (noped.length < 3) return [];
     const genres = {};
     noped.forEach(h => (h.genres || []).forEach(g => {
-      const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+      const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
       genres[name] = (genres[name] || 0) + 1;
     }));
     return Object.entries(genres)
@@ -1898,7 +2597,7 @@ class App {
     if (weekItems.length < 2) return { '🎬': 50, '🧠': 30, '😂': 20 };
     const vibes = { '🎬': 0, '🧠': 0, '😂': 0, '💕': 0 };
     weekItems.forEach(h => {
-      const genres = (h.genres || []).map(g => (TMDB_GENRE_MAP[g] || '').toLowerCase());
+      const genres = (h.genres || []).map(g => (this._genreMap[g] || '').toLowerCase());
       if (genres.some(g => /action|adventure/.test(g))) vibes['🎬']++;
       if (genres.some(g => /drama|sci-fi|thriller/.test(g))) vibes['🧠']++;
       if (genres.some(g => /comedy/.test(g))) vibes['😂']++;
@@ -1929,7 +2628,7 @@ class App {
   shareDNA() {
     const topGenres = {};
     this.watchlist.forEach(w => (w.genres || []).forEach(g => {
-      const name = typeof g === 'string' ? g : (TMDB_GENRE_MAP[g] || g);
+      const name = typeof g === 'string' ? g : (this._genreMap[g] || g);
       topGenres[name] = (topGenres[name] || 0) + 1;
     }));
     const sorted = Object.entries(topGenres).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -1948,5 +2647,7 @@ class App {
     });
   }
 }
+
+export { App };
 
 window.app = new App();

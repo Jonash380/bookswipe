@@ -6,6 +6,11 @@
 
 cd "$(dirname "$0")"
 
+# Load API keys from .env file (create one with your keys to enable TMDB/Trakt/IGDB)
+if [ -f .env ]; then
+  source .env
+fi
+
 # Check for TMDB key
 if [ -z "$TMDB_API_KEY" ]; then
   echo "⚠️  TMDB_API_KEY not set. TMDB features (movies/TV) will not work."

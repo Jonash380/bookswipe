@@ -13,6 +13,8 @@ import os
 import sys
 import signal
 import json
+import gzip
+import io
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -43,6 +45,7 @@ STEAM_CC = os.environ.get('STEAM_CC', 'us')  # Country code for pricing
 
 _igdb_token = None
 _igdb_token_expires = 0
+_igdb_token_lock = threading.Lock()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('bookswipe')
@@ -93,26 +96,27 @@ def _check_rate(ip):
 
 def _get_igdb_token():
     global _igdb_token, _igdb_token_expires
-    if _igdb_token and time.time() < _igdb_token_expires - 60:
-        return _igdb_token
-    if not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET:
-        return None
-    data = urllib.parse.urlencode({
-        'client_id': TWITCH_CLIENT_ID,
-        'client_secret': TWITCH_CLIENT_SECRET,
-        'grant_type': 'client_credentials'
-    }).encode()
-    try:
-        req = urllib.request.Request(IGDB_AUTH, data=data, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as r:
-            resp = json.loads(r.read())
-            _igdb_token = resp.get('access_token', '')
-            _igdb_token_expires = time.time() + resp.get('expires_in', 3600)
-            log.info('IGDB token refreshed, expires in %ds', resp.get('expires_in', 3600))
+    with _igdb_token_lock:
+        if _igdb_token and time.time() < _igdb_token_expires - 60:
             return _igdb_token
-    except Exception as e:
-        log.warning('IGDB token fetch failed: %s', e)
-        return None
+        if not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET:
+            return None
+        data = urllib.parse.urlencode({
+            'client_id': TWITCH_CLIENT_ID,
+            'client_secret': TWITCH_CLIENT_SECRET,
+            'grant_type': 'client_credentials'
+        }).encode()
+        try:
+            req = urllib.request.Request(IGDB_AUTH, data=data, method='POST')
+            with urllib.request.urlopen(req, timeout=10) as r:
+                resp = json.loads(r.read())
+                _igdb_token = resp.get('access_token', '')
+                _igdb_token_expires = time.time() + resp.get('expires_in', 3600)
+                log.info('IGDB token refreshed, expires in %ds', resp.get('expires_in', 3600))
+                return _igdb_token
+        except Exception as e:
+            log.warning('IGDB token fetch failed: %s', e)
+            return None
 
 # SSRF whitelist
 _OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find)/')
@@ -159,7 +163,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Health check
         if p == '/health':
             return self._json({'status': 'ok', 'version': '3.0'})
-        if p.startswith('/proxy/tmdb/'):    return self._tmdb(p[12:])
+        if p.startswith('/proxy/tmdb/'):    return self._tmdb(p[11:])
         if p.startswith('/proxy/trakt/'):   return self._trakt(p[13:])
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
@@ -179,7 +183,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json({'error': 'TMDB_API_KEY not set', 'status': 503}, 503)
         if not _OK_TMDB.match(path.split('?')[0]):
             return self._json({'error': 'Invalid path', 'status': 400}, 400)
-        data = fetch(f'{TMDB_BASE}/{path}', headers={'Authorization': f'Bearer {TMDB_KEY}'}, ttl=300)
+        # Append api_key as query param (TMDB v3 key doesn't work as Bearer token)
+        sep = '&' if '?' in path else '?'
+        data = fetch(f'{TMDB_BASE}/{path}{sep}api_key={TMDB_KEY}', ttl=300)
         if 'status' in data and isinstance(data['status'], int):
             return self._json(data, data['status'])
         self._json(data)
@@ -256,7 +262,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json({'error': str(e), 'status': 500}, 500)
 
     def _json(self, data, status=200):
-        body = json.dumps(data).encode()
+        body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        # Gzip compress responses > 1KB for 3-5x faster transfer
+        accept_encoding = self.headers.get('Accept-Encoding', '')
+        if len(body) > 1024 and 'gzip' in accept_encoding:
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as f:
+                f.write(body)
+            compressed = buf.getvalue()
+            if len(compressed) < len(body):
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Content-Length', len(compressed))
+                if status >= 400:
+                    self.send_header('Cache-Control', 'no-store')
+                else:
+                    self.send_header('Cache-Control', 'public, max-age=300')
+                self.end_headers()
+                self.wfile.write(compressed)
+                return
+        # Uncompressed fallback
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', len(body))
@@ -271,6 +297,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Max-Age', '86400')
         super().end_headers()
 
     def do_OPTIONS(self):

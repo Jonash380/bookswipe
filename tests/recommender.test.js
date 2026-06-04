@@ -1,0 +1,675 @@
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+
+// Set up minimal DOM
+const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+  url: 'http://localhost',
+  pretendToBeVisual: true,
+});
+global.window = dom.window;
+global.document = dom.window.document;
+global.performance = dom.window.performance;
+global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+global.cancelAnimationFrame = (id) => clearTimeout(id);
+
+Object.defineProperty(global, 'navigator', {
+  value: { vibrate: () => {} },
+  writable: true,
+  configurable: true,
+});
+global.window.getComputedStyle = () => ({});
+
+// Mock localStorage
+const storageMock = (() => {
+  let store = {};
+  return {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+    clear: () => { store = {}; },
+    get length() { return Object.keys(store).length; },
+    key: (i) => Object.keys(store)[i] ?? null,
+  };
+})();
+Object.defineProperty(global.window, 'localStorage', {
+  value: storageMock,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(globalThis, 'localStorage', {
+  value: storageMock,
+  writable: true,
+  configurable: true,
+});
+
+const { Recommender } = await import('../js/recommender.js');
+
+// ===== Helpers =====
+
+function makeMockApp(stateOverrides = {}) {
+  return {
+    state: {
+      selectedGenres: [],
+      selectedMoods: [],
+      eraFilter: 'all',
+      boostedMoods: [],
+      blockedGenres: [],
+      selectedPlatforms: [],
+      ...stateOverrides,
+    },
+    _genreMap: {
+      28: 'Action', 12: 'Adventure', 35: 'Comedy', 18: 'Drama',
+      27: 'Horror', 10749: 'Romance', 878: 'Science Fiction',
+      53: 'Thriller', 16: 'Animation', 14: 'Fantasy',
+    },
+  };
+}
+
+function makeItem(id, opts = {}) {
+  return {
+    id,
+    title: opts.title || `Item ${id}`,
+    type: opts.type || 'movie',
+    source: opts.source || 'tmdb',
+    genres: opts.genres || [],
+    tags: opts.tags || [],
+    mediaDNA: opts.mediaDNA || null,
+    year: opts.year ?? null,
+    release_date: opts.release_date ?? null,
+    rating: opts.rating ?? null,
+    _mmrScore: opts._mmrScore ?? null,
+    platforms: opts.platforms || [],
+    mechanics: opts.mechanics || [],
+    themes: opts.themes || [],
+    ...opts,
+  };
+}
+
+/**
+ * Reset the recommender profile to a clean slate.
+ */
+function resetProfile(rec) {
+  rec.profile = {
+    genreWeights: {}, tagWeights: {}, eraPreference: null,
+    tropes: {}, pacingStyles: {}, aesthetics: {}, warnings: {},
+    totalSwipes: 0, likeRatio: 0,
+    gamePlatformWeights: {}, gameMechanicWeights: {}, gameThemeWeights: {},
+  };
+  rec.cache.clear();
+}
+
+// ===== Tests =====
+
+describe('Recommender', () => {
+  let app;
+  let rec;
+
+  beforeEach(() => {
+    app = makeMockApp();
+    rec = new Recommender(app);
+    resetProfile(rec);
+  });
+
+  afterEach(() => {
+    storageMock.clear();
+  });
+
+  // ================================================================
+  // BAYESIAN SCORING
+  // ================================================================
+
+  describe('score() — Bayesian scoring', () => {
+    it('should return baseline prior mean (50) for a neutral item with no swipes', () => {
+      const item = makeItem('neutral');
+      const score = rec.score(item);
+      assert.equal(score, 50);
+    });
+
+    it('should return cached score for same item id', () => {
+      rec.profile.totalSwipes = 10; // disable shrinkage so score != prior mean
+      const item = makeItem('cached', { genres: [28] }); // Action
+      app.state.selectedGenres = [28];
+      const scoreWithoutCache = 50 + 1*15; // 65 (no shrinkage)
+      const first = rec.score(item);
+      assert.equal(first, scoreWithoutCache, 'first call should compute score');
+      // Modify item — if cache is broken, re-scoring would give a different result
+      item.genres = [];
+      const second = rec.score(item);
+      assert.equal(second, first, 'second call should return cached score');
+    });
+
+    it('should clamp score to [0, 100]', () => {
+      // Extremely positive — all genres matched with high swipes to reduce shrinkage
+      rec.profile.totalSwipes = 10;
+      const item = makeItem('clamp-up', { genres: [28, 12, 35, 18, 27] });
+      app.state.selectedGenres = [28, 12, 35, 18, 27];
+      const score = rec.score(item);
+      assert.ok(score <= 100, `score ${score} should be <= 100`);
+      assert.ok(score >= 0, `score ${score} should be >= 0`);
+    });
+
+    it('should clamp extremely negative scores to 0', () => {
+      rec.profile.totalSwipes = 10;
+      // No matching genres, plus a blocked genre that triggers W.block (-40)
+      app.state.blockedGenres = ['horror'];
+      const item = makeItem('clamp-down', { genres: [27] }); // Horror
+      const score = rec.score(item);
+      assert.ok(score >= 0, `score ${score} should be >= 0`);
+    });
+
+    describe('Bayesian shrinkage (cold start)', () => {
+      it('should shrink score toward prior mean when totalSwipes < 3', () => {
+        rec.profile.totalSwipes = 1;
+        // With genre overlap, the base score would normally be 50 + 1*15 = 65
+        app.state.selectedGenres = [28]; // Action
+        const item = makeItem('shrink', { genres: [28] });
+        const score = rec.score(item);
+        // After shrinkage: 50 + (65 - 50) * (1/3) = 50 + 5 = 55
+        assert.equal(score, 55);
+      });
+
+      it('should apply full score without shrinkage when totalSwipes >= 3', () => {
+        rec.profile.totalSwipes = 3;
+        app.state.selectedGenres = [28]; // Action
+        const item = makeItem('no-shrink', { genres: [28] });
+        const score = rec.score(item);
+        // Full score: 50 + 1*15 = 65
+        assert.equal(score, 65);
+      });
+
+      it('should interpolate shrinkage proportionally (2 swipes = 2/3 strength)', () => {
+        rec.profile.totalSwipes = 2;
+        app.state.selectedGenres = [28];
+        const item = makeItem('partial-shrink', { genres: [28] });
+        const score = rec.score(item);
+        // 50 + (65 - 50) * (2/3) = 50 + 10 = 60
+        assert.equal(score, 60);
+      });
+    });
+
+    describe('_scoreMedia — media scoring factors', () => {
+      it('should boost score for matching selected genres', () => {
+        rec.profile.totalSwipes = 10; // disable Bayesian shrinkage
+        app.state.selectedGenres = [28, 12]; // Action, Adventure
+        const item = makeItem('genres', { genres: [28, 12, 35] });
+        const score = rec.score(item);
+        // 50 + 2*15 = 80
+        assert.equal(score, 80);
+      });
+
+      it('should boost score for matching selected moods (tags)', () => {
+        rec.profile.totalSwipes = 10; // disable Bayesian shrinkage
+        app.state.selectedMoods = ['dark', 'funny'];
+        const item = makeItem('moods', { tags: ['dark', 'funny', 'epic'] });
+        const score = rec.score(item);
+        // 50 + 2*20 = 90
+        assert.equal(score, 90);
+      });
+
+      it('should apply era penalty when year is outside selected era range', () => {
+        rec.profile.totalSwipes = 10; // disable shrinkage for clean assert
+        app.state.eraFilter = 'current'; // [2010, 2026]
+        const item = makeItem('era', { year: 1995 });
+        const score = rec.score(item);
+        // 50 + (-30) = 20
+        assert.equal(score, 20);
+      });
+
+      it('should NOT apply era penalty when eraFilter is "all"', () => {
+        rec.profile.totalSwipes = 10; // disable shrinkage so era logic is tested
+        app.state.eraFilter = 'all';
+        const item = makeItem('no-era', { year: 1995 });
+        const score = rec.score(item);
+        // 50, no penalty (eraFilter 'all' skips the check entirely)
+        assert.equal(score, 50);
+      });
+
+      it('should boost score for matching DNA tropes from profile', () => {
+        rec.profile.totalSwipes = 10;
+        rec.profile.tropes.revenge = 3;
+        const item = makeItem('dna', {
+          mediaDNA: { tropes: ['revenge', 'betrayal'], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        // 50 + 1*10 = 60
+        assert.equal(score, 60);
+      });
+
+      it('should boost score for matching DNA pacing styles from profile', () => {
+        rec.profile.totalSwipes = 10;
+        rec.profile.pacingStyles.relentless = 2;
+        const item = makeItem('pacing', {
+          mediaDNA: { tropes: [], pacing: ['relentless', 'twisty'], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        // 50 + 1*8 = 58
+        assert.equal(score, 58);
+      });
+
+      it('should boost score for matching DNA aesthetics from profile', () => {
+        rec.profile.totalSwipes = 10;
+        rec.profile.aesthetics.neon_noir = 1;
+        const item = makeItem('aesthetic', {
+          mediaDNA: { tropes: [], pacing: [], aesthetic: ['neon_noir'], warnings: [] },
+        });
+        const score = rec.score(item);
+        // 50 + 1*7 = 57
+        assert.equal(score, 57);
+      });
+
+      it('should apply warning penalty based on profile dislikes', () => {
+        // NOTE: _computeWarningPenalty returns negative values (penalty -= disliked[w]),
+        // and W.warning = -5, so the double-negative gives: score += (-2) * (-5) = +10
+        rec.profile.totalSwipes = 10;
+        rec.profile.warnings.gore = 2;
+        const item = makeItem('warn', {
+          mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: ['gore'] },
+        });
+        const score = rec.score(item);
+        // 50 + (-2)*(-5) = 60
+        assert.equal(score, 60);
+      });
+
+      it('should boost score for boosted moods matching genre names', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.boostedMoods = ['action'];
+        const item = makeItem('boosted', { genres: [28, 12] }); // Action, Adventure
+        const score = rec.score(item);
+        // 50 + 1*8 = 58 (only Action matches "action")
+        assert.equal(score, 58);
+      });
+
+      it('should apply block penalty when any genre matches blocked list', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.blockedGenres = ['horror'];
+        const item = makeItem('blocked', { genres: [27, 35] }); // Horror, Comedy
+        const score = rec.score(item);
+        // 50 + (-40) = 10
+        assert.equal(score, 10);
+      });
+
+      it('should handle item with release_date string instead of year', () => {
+        app.state.eraFilter = 'current';
+        rec.profile.totalSwipes = 10;
+        const item = makeItem('release', { release_date: '1999', genres: [] });
+        const score = rec.score(item);
+        // 1999 outside [2010, 2026]: 50 + (-30) = 20
+        assert.equal(score, 20);
+      });
+
+      it('should not crash on item with null genres', () => {
+        rec.profile.totalSwipes = 10; // disable shrinkage so we test the actual path
+        const item = makeItem('null-genres', { genres: null });
+        const score = rec.score(item);
+        // Without genres, neither genre overlap nor boosted moods nor blocked genres trigger
+        assert.equal(score, 50);
+      });
+    });
+
+    describe('_scoreGame — game scoring factors', () => {
+      it('should boost score when game platform matches selected', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.selectedPlatforms = [6]; // PC
+        const item = makeItem('game-plat', {
+          type: 'game', source: 'igdb',
+          platforms: [{ id: 6, name: 'PC (Steam)' }],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 + 25 = 75
+        assert.equal(score, 75);
+      });
+
+      it('should penalize when game platform does NOT match selected', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.selectedPlatforms = [48]; // PS5
+        const item = makeItem('game-no-plat', {
+          type: 'game', source: 'igdb',
+          platforms: [{ id: 6, name: 'PC (Steam)' }],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 - 15 = 35
+        assert.equal(score, 35);
+      });
+
+      it('should boost score for matching game genres (via name overlap)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.selectedGenres = ['Action'];
+        const item = makeItem('game-genre', {
+          type: 'game', source: 'igdb',
+          genres: [{ id: 2, name: 'Action' }],
+          platforms: [],
+        });
+        const score = rec.score(item);
+        // 50 + 1*15 = 65
+        assert.equal(score, 65);
+      });
+
+      it('should boost score for matching moods (tags) on games', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.selectedMoods = ['dark', 'epic'];
+        const item = makeItem('game-mood', {
+          type: 'game', source: 'igdb',
+          tags: ['dark'],
+          platforms: [],
+          genres: [],
+        });
+        const score = rec.score(item);
+        // 50 + 1*20 = 70
+        assert.equal(score, 70);
+      });
+
+      it('should boost score for matching mechanics from profile', () => {
+        rec.profile.totalSwipes = 10;
+        rec.profile.gameMechanicWeights.open_world = 2;
+        const item = makeItem('game-mech', {
+          type: 'game', source: 'igdb',
+          mechanics: ['open_world', 'crafting'],
+          platforms: [],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 + 1*10 = 60
+        assert.equal(score, 60);
+      });
+
+      it('should boost score for matching themes from profile', () => {
+        rec.profile.totalSwipes = 10;
+        rec.profile.gameThemeWeights['fantasy'] = 1;
+        const item = makeItem('game-theme', {
+          type: 'game', source: 'igdb',
+          themes: ['fantasy', 'sci-fi'],
+          platforms: [],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 + 1*10 = 60
+        assert.equal(score, 60);
+      });
+
+      it('should boost score for high-rated games (>= 85)', () => {
+        rec.profile.totalSwipes = 10;
+        const item = makeItem('game-high-rating', {
+          type: 'game', source: 'igdb',
+          rating: 90,
+          platforms: [],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 + 5 = 55
+        assert.equal(score, 55);
+      });
+
+      it('should penalize low-rated games (< 60)', () => {
+        rec.profile.totalSwipes = 10;
+        const item = makeItem('game-low-rating', {
+          type: 'game', source: 'igdb',
+          rating: 50,
+          platforms: [],
+          genres: [],
+          tags: [],
+        });
+        const score = rec.score(item);
+        // 50 - 5 = 45
+        assert.equal(score, 45);
+      });
+
+      it('should not crash for game with no platforms (platforms undefined)', () => {
+        rec.profile.totalSwipes = 10;
+        const item = makeItem('game-no-plats', {
+          type: 'game', source: 'igdb',
+          genres: [],
+          tags: [],
+        });
+        // Should not throw
+        const score = rec.score(item);
+        assert.equal(score, 50);
+      });
+    });
+  });
+
+  // ================================================================
+  // MMR DIVERSITY RE-RANKING
+  // ================================================================
+
+  describe('mmrRerank — MMR diversity re-ranking', () => {
+    it('should return items unchanged if array is too small', () => {
+      const items = [makeItem('a'), makeItem('b'), makeItem('c')];
+      const result = rec.mmrRerank(items, 3);
+      assert.equal(result, items); // same reference
+    });
+
+    it('should return items unchanged if length <= diversityCount + 3 (empty)', () => {
+      const result = rec.mmrRerank([], 3);
+      assert.deepEqual(result, []);
+    });
+
+    it('should pick the first item by relevance (highest _mmrScore)', () => {
+      // MMR expects items already sorted by score descending
+      const items = [
+        makeItem('high', { genres: [12], _mmrScore: 90 }),
+        makeItem('final', { genres: [14], _mmrScore: 70 }),
+        makeItem('mid', { genres: [35], _mmrScore: 60 }),
+        makeItem('yet-another', { genres: [27], _mmrScore: 55 }),
+        makeItem('another', { genres: [18], _mmrScore: 45 }),
+        makeItem('last', { genres: [878], _mmrScore: 40 }),
+        makeItem('low', { genres: [28], _mmrScore: 30 }),
+      ];
+      const result = rec.mmrRerank(items, 3);
+      // First result should be the highest _mmrScore (90), which is also first in array
+      assert.equal(result[0].id, 'high');
+    });
+
+    it('should inject diverse picks near the top (diversityCount items)', () => {
+      // All items have the same genre to make diversity meaningful
+      const items = [
+        makeItem('a', { genres: [28], _mmrScore: 100 }),
+        makeItem('b', { genres: [28], _mmrScore: 90 }),
+        makeItem('c', { genres: [12], _mmrScore: 80 }),
+        makeItem('d', { genres: [35], _mmrScore: 70 }),
+        makeItem('e', { genres: [28], _mmrScore: 60 }),
+        makeItem('f', { genres: [28], _mmrScore: 50 }),
+        makeItem('g', { genres: [28], _mmrScore: 40 }),
+      ];
+      const result = rec.mmrRerank(items, 3);
+      // result[0] = 'a' (highest _mmrScore)
+      // Then diverse picks: 'c' (genre 12 different from 28), 'd' (genre 35)
+      // So result[1] should be one of ['c', 'd'], result[2] the other
+      assert.equal(result[0].id, 'a');
+      assert.notEqual(result[1].id, 'b', 'second pick should be diverse, not second-highest');
+      assert.ok(['c', 'd'].includes(result[1].id), 'second pick should be a diverse genre');
+      assert.ok(['c', 'd'].includes(result[2].id), 'third pick should be the other diverse genre');
+      assert.notEqual(result[1].id, result[2].id, 'second and third picks should differ');
+    });
+
+    it('should append remaining items in original order after diverse picks', () => {
+      // MMR picks diversityCount+1 = 4 items: a (highest score), then c, d, b (diverse).
+      // 'b' gets picked as the 4th item because its high relevance (90) gives it the best
+      // MMR score among the remaining single-genre items. Tail = [e, f, g].
+      const items = [
+        makeItem('a', { genres: [28], _mmrScore: 100 }),
+        makeItem('b', { genres: [28], _mmrScore: 90 }),
+        makeItem('c', { genres: [12], _mmrScore: 80 }),
+        makeItem('d', { genres: [35], _mmrScore: 70 }),
+        makeItem('e', { genres: [28], _mmrScore: 60 }),
+        makeItem('f', { genres: [28], _mmrScore: 50 }),
+        makeItem('g', { genres: [28], _mmrScore: 40 }),
+      ];
+      const result = rec.mmrRerank(items, 3);
+      // MMR picks 4 items: a, c, d, b (all 4 diverse/relevant)
+      // Remaining in original order: e, f, g
+      const tail = result.slice(4);
+      assert.deepEqual(tail.map(i => i.id), ['e', 'f', 'g']);
+    });
+
+    it('should work with default diversityCount = 3', () => {
+      const items = [
+        makeItem('a', { genres: [28], _mmrScore: 100 }),
+        makeItem('b', { genres: [12], _mmrScore: 90 }),
+        makeItem('c', { genres: [35], _mmrScore: 80 }),
+        makeItem('d', { genres: [18], _mmrScore: 70 }),
+        makeItem('e', { genres: [27], _mmrScore: 60 }),
+        makeItem('f', { genres: [14], _mmrScore: 50 }),
+        makeItem('g', { genres: [878], _mmrScore: 40 }),
+      ];
+      const result = rec.mmrRerank(items);
+      assert.equal(result.length, 7);
+      // First pick is highest score
+      assert.equal(result[0].id, 'a');
+    });
+
+    it('should handle items without _mmrScore (defaults to 50 in MMR calc)', () => {
+      const items = [
+        makeItem('a', { genres: [28] }),
+        makeItem('b', { genres: [12] }),
+        makeItem('c', { genres: [35] }),
+        makeItem('d', { genres: [18] }),
+        makeItem('e', { genres: [27] }),
+        makeItem('f', { genres: [14] }),
+        makeItem('g', { genres: [878] }),
+      ];
+      const result = rec.mmrRerank(items, 3);
+      assert.equal(result.length, 7);
+      // First pick is the first item (tie-breaking by insertion order)
+      assert.equal(result[0].id, 'a');
+    });
+
+    it('should handle items with no genres gracefully', () => {
+      const items = [
+        makeItem('a', { _mmrScore: 100 }),
+        makeItem('b', { _mmrScore: 90 }),
+        makeItem('c', { _mmrScore: 80 }),
+        makeItem('d', { _mmrScore: 70 }),
+        makeItem('e', { _mmrScore: 60 }),
+        makeItem('f', { _mmrScore: 50 }),
+        makeItem('g', { _mmrScore: 40 }),
+      ];
+      const result = rec.mmrRerank(items, 3);
+      // Without genres, all similarities are 0, so MMR = lambda * (relevance/100)
+      // This means highest scores come first: a, b, c, then remaining in order
+      assert.equal(result[0].id, 'a');
+      assert.equal(result[1].id, 'b');
+      assert.equal(result[2].id, 'c');
+      // Remaining in original order
+      assert.deepEqual(result.slice(3).map(i => i.id), ['d', 'e', 'f', 'g']);
+    });
+  });
+
+  describe('_computeSimilarity — Jaccard similarity', () => {
+    it('should return 0 if either item has no genres', () => {
+      assert.equal(rec._computeSimilarity(makeItem('a'), makeItem('b')), 0);
+      assert.equal(
+        rec._computeSimilarity(makeItem('a', { genres: [28] }), makeItem('b')),
+        0,
+      );
+      assert.equal(
+        rec._computeSimilarity(makeItem('a'), makeItem('b', { genres: [28] })),
+        0,
+      );
+    });
+
+    it('should return 1 for identical genre sets', () => {
+      const a = makeItem('a', { genres: [28, 12] });
+      const b = makeItem('b', { genres: [28, 12] });
+      assert.equal(rec._computeSimilarity(a, b), 1);
+    });
+
+    it('should return 0 for disjoint genre sets', () => {
+      const a = makeItem('a', { genres: [28, 12] });
+      const b = makeItem('b', { genres: [35, 18] });
+      assert.equal(rec._computeSimilarity(a, b), 0);
+    });
+
+    it('should compute Jaccard similarity for overlapping genre sets', () => {
+      const a = makeItem('a', { genres: [28, 12, 35] });
+      const b = makeItem('b', { genres: [28, 35, 18] });
+      // Intersection: {28, 35} = 2, Union: {28, 12, 35, 18} = 4
+      // Jaccard = 2/4 = 0.5
+      assert.equal(rec._computeSimilarity(a, b), 0.5);
+    });
+
+    it('should normalize numeric genre IDs via TMDB_GENRE_MAP', () => {
+      // 28 = Action, 12 = Adventure
+      const a = makeItem('a', { genres: [28] });
+      const b = makeItem('b', { genres: ['Action'] });
+      assert.equal(rec._computeSimilarity(a, b), 1);
+    });
+
+    it('should normalize genre names to lowercase for comparison', () => {
+      const a = makeItem('a', { genres: ['Action'] });
+      const b = makeItem('b', { genres: ['action'] });
+      assert.equal(rec._computeSimilarity(a, b), 1);
+    });
+
+    it('should handle items where genres contain objects with name property', () => {
+      const a = makeItem('a', { genres: [{ id: 28, name: 'Action' }] });
+      const b = makeItem('b', { genres: ['Action'] });
+      assert.equal(rec._computeSimilarity(a, b), 1);
+    });
+
+    it('should handle null/undefined genre values gracefully', () => {
+      // null/undefined map to '' which becomes a set member, making Jaccard = 1/2 = 0.5
+      // Set A: {'', 'action'}, Set B: {'action'}, intersection=1, union=2
+      const a = makeItem('a', { genres: [null, undefined, 28] });
+      const b = makeItem('b', { genres: [28] });
+      assert.equal(rec._computeSimilarity(a, b), 0.5);
+    });
+  });
+
+  // ================================================================
+  // UTILITY METHODS
+  // ================================================================
+
+  describe('getTopGenres / getTopTropes / getTopAesthetics / getTopPacingStyles', () => {
+    it('should return top n entries sorted by weight descending', () => {
+      rec.profile.genreWeights = { Action: 5, Drama: 10, Comedy: 3, Horror: 8 };
+      const top = rec.getTopGenres(2);
+      assert.deepEqual(top, ['Drama', 'Horror']);
+    });
+
+    it('should return top n tropes sorted by weight descending', () => {
+      rec.profile.tropes = { revenge: 2, betrayal: 5, sacrifice: 1 };
+      const top = rec.getTopTropes(2);
+      assert.deepEqual(top, ['betrayal', 'revenge']);
+    });
+
+    it('should return top n aesthetics sorted by weight descending', () => {
+      rec.profile.aesthetics = { neon_noir: 3, gritty_realism: 7, cottagecore: 1 };
+      const top = rec.getTopAesthetics(2);
+      assert.deepEqual(top, ['gritty_realism', 'neon_noir']);
+    });
+
+    it('should return top n pacing styles sorted by weight descending', () => {
+      rec.profile.pacingStyles = { relentless: 4, slow_burn: 8, twisty: 2 };
+      const top = rec.getTopPacingStyles(2);
+      assert.deepEqual(top, ['slow_burn', 'relentless']);
+    });
+
+    it('should return empty array when no data exists', () => {
+      assert.deepEqual(rec.getTopGenres(3), []);
+      assert.deepEqual(rec.getTopTropes(3), []);
+      assert.deepEqual(rec.getTopAesthetics(3), []);
+      assert.deepEqual(rec.getTopPacingStyles(3), []);
+    });
+  });
+
+  describe('clear cache', () => {
+    it('should invalidate all cached scores', () => {
+      const item = makeItem('cache-me', { genres: [28] });
+      app.state.selectedGenres = [28];
+      const first = rec.score(item);
+      // Invalidate cache
+      rec.clear();
+      // Same item should be re-scored (and since shrinkage/etc is now gone, same result)
+      const second = rec.score(item);
+      assert.equal(first, second);
+    });
+  });
+});
