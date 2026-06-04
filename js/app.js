@@ -320,8 +320,16 @@ class App {
   }
 
   _renderWelcomeScreen(app) {
+    const totalSteps = this.state.mediaType === 'games' ? 4 : 3;
     app.innerHTML = `
       <div class="onboarding">
+        <div class="onboarding-steps">
+          <div class="step-dot active"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
+        </div>
         <div class="onboarding-logo">📚🎬🎮</div>
         <h1>${this.tr.title}</h1>
         <p>${this.tr.subtitle}</p>
@@ -335,7 +343,7 @@ class App {
           <button class="btn btn-sm ${this.lang === 'de' ? 'active' : ''}" data-lang="de">DE</button>
           <button class="btn btn-sm ${this.lang === 'en' ? 'active' : ''}" data-lang="en">EN</button>
         </div>
-        <button class="btn btn-primary btn-start">${this.tr.discover}</button>
+        <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
       </div>`;
     app.querySelector('[data-type="books"]')?.addEventListener('click', () => { this.state.mediaType = 'books'; this.render(); });
     app.querySelector('[data-type="movies"]')?.addEventListener('click', () => { this.state.mediaType = 'movies'; this.render(); });
@@ -356,18 +364,27 @@ class App {
     ];
     app.innerHTML = `
       <div class="onboarding who-watching">
+        <div class="onboarding-steps">
+          <div class="step-dot completed">✓</div>
+          <div class="step-line filled"></div>
+          <div class="step-dot active"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
+        </div>
         <h1>${this.tr.whoWatching}</h1>
         <p class="onboarding-sub">${this.tr.whoWatchingSub}</p>
         <div class="watch-mode-grid">
           ${modes.map(m => `
             <button class="watch-mode-card ${this.state.watchMode === m.key ? 'selected' : ''}" data-mode="${m.key}">
               <span class="watch-mode-icon">${m.icon}</span>
-              <span class="watch-mode-label">${this.tr[m.key]}</span>
-              <span class="watch-mode-sub">${this.tr[m.key + 'Sub']}</span>
+              <div class="watch-mode-text">
+                <span class="watch-mode-label">${this.tr[m.key]}</span>
+                <span class="watch-mode-sub">${this.tr[m.key + 'Sub']}</span>
+              </div>
             </button>
           `).join('')}
         </div>
-        <button class="btn btn-primary btn-start">${this.tr.discover}</button>
+        <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
       </div>`;
     app.querySelectorAll('.watch-mode-card').forEach(card => {
       card.addEventListener('click', () => {
@@ -399,6 +416,13 @@ class App {
     const platforms = GAME_PLATFORMS;
     app.innerHTML = `
       <div class="onboarding who-watching">
+        <div class="onboarding-steps">
+          <div class="step-dot completed">✓</div>
+          <div class="step-line filled"></div>
+          <div class="step-dot completed">✓</div>
+          <div class="step-line filled"></div>
+          <div class="step-dot active"></div>
+        </div>
         <h1>${this.tr.platforms}</h1>
         <p class="onboarding-sub">${this.lang === 'de' ? 'Waehle deine Plattformen' : 'Select your platforms'}</p>
         <div class="platform-grid">
@@ -409,7 +433,7 @@ class App {
             </button>
           `).join('')}
         </div>
-        <button class="btn btn-primary btn-start">${this.tr.discover}</button>
+        <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
       </div>`;
     app.querySelectorAll('.platform-card').forEach(card => {
       card.addEventListener('click', () => {
@@ -445,8 +469,13 @@ class App {
     }
     const item = items[idx];
     const elapsed = ((Date.now() - this._rapidFireStart) / 1000).toFixed(1);
+    const isGames = this.state.mediaType === 'games';
+    const stepDots = isGames
+      ? `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div></div>`
+      : `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div></div>`;
     app.innerHTML = `
       <div class="onboarding rapid-fire">
+        ${stepDots}
         <div class="rapid-fire-header">
           <h1>${this.tr.rapidFireTitle}</h1>
           <p>${this.tr.rapidFireSub}</p>
@@ -464,8 +493,8 @@ class App {
           </div>
         </div>
         <div class="swipe-actions rapid-fire-actions">
-          <button class="btn btn-nope rf-nope">👎</button>
-          <button class="btn btn-like rf-like">❤️</button>
+          <button class="btn btn-nope rf-nope" title="Pass">✕</button>
+          <button class="btn btn-like rf-like" title="Like">♥</button>
         </div>
       </div>`;
     const cardEl = app.querySelector('.rapid-fire-card');
@@ -825,13 +854,16 @@ class App {
               ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview.slice(0, 120))}${card.overview.length > 120 ? '...' : ''}</p>` : ''}
               ${isBlind && !isBlindGame && card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : ''}
             </div>
+            <span class="swipe-hint swipe-hint-like">${this.tr.like}</span>
+            <span class="swipe-hint swipe-hint-nope">${this.tr.nope}</span>
+            <span class="swipe-hint swipe-hint-super">★ Super</span>
             <button class="card-info-btn" data-action="info" aria-label="${this.tr.whySeeing}">ℹ️</button>
           </div>
         </div>
         <div class="swipe-actions">
-          <button class="btn btn-nope" aria-label="${this.tr.nope}">👎 ${this.tr.nope}</button>
-          <button class="btn btn-skip" aria-label="${this.tr.skip}">⏭ ${this.tr.skip}</button>
-          <button class="btn btn-like" aria-label="${this.tr.like}">❤️ ${this.tr.like}</button>
+          <button class="btn btn-nope" aria-label="${this.tr.nope}" title="${this.tr.nope}">✕</button>
+          <button class="btn btn-skip" aria-label="${this.tr.skip}" title="${this.tr.skip}">⏭</button>
+          <button class="btn btn-like" aria-label="${this.tr.like}" title="${this.tr.like}">♥</button>
         </div>
         ${this._navHTML('discover')}
       </div>`;

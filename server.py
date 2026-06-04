@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-BookSwipe Server v3
+BookSwipe Server v4
 ===================
-Secure proxy server for TMDB, Trakt, Google Books, and IGDB APIs.
-Improvements: POST support for IGDB, true LRU cache, health endpoint.
+Secure proxy server for TMDB, Trakt, Google Books, IGDB, and Steam APIs.
+Improvements: Steam Store proxy, topsellers, tags, pricing, review sentiment.
 
 Set environment variables before running:
   TMDB_API_KEY=your_key TRAKT_API_KEY=optional python3 server.py
@@ -33,11 +33,13 @@ TRAKT_BASE = 'https://api.trakt.tv'
 GB_BASE = 'https://www.googleapis.com/books/v1'
 IGDB_BASE = 'https://api.igdb.com/v4'
 IGDB_AUTH = 'https://id.twitch.tv/oauth2/token'
+STEAM_STORE_BASE = 'https://store.steampowered.com/api'
 
 TMDB_KEY = os.environ.get('TMDB_API_KEY', '')
 TRAKT_KEY = os.environ.get('TRAKT_API_KEY', '')
 TWITCH_CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID', '')
 TWITCH_CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET', '')
+STEAM_CC = os.environ.get('STEAM_CC', 'us')  # Country code for pricing
 
 _igdb_token = None
 _igdb_token_expires = 0
@@ -117,6 +119,8 @@ _OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find)/')
 _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
 _IGDB_BODY_RE = re.compile(r'^(fields|search|where|sort|limit|offset)')
+# Steam Store API: appdetails, featured, search (JSON), reviews
+_OK_STEAM = re.compile(r'^/(appdetails|featured|reviews|search)$')
 
 def fetch(url, headers=None, ttl=300, method='GET', body=None):
     cache_key = f"{method}:{url}:{body or ''}"
@@ -159,6 +163,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/trakt/'):   return self._trakt(p[13:])
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
+        if p.startswith('/proxy/steam/'):   return self._steam(p[13:])
         super().do_GET()
 
     def do_POST(self):
