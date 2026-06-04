@@ -1,17 +1,16 @@
-import { getTraktTags } from './db.js';
 const OL_SEARCH = 'https://openlibrary.org/search.json';
 const OL_COVERS = 'https://covers.openlibrary.org/b';
 const GB_SEARCH = '/proxy/gbooks/volumes';
 const delay = ms => new Promise(r => setTimeout(r, ms));
-export async function fetchBooks(genres, moods, lang = 'de') {
+export async function fetchBooks(genres, moods, lang = 'de', signal) {
   const queries = genres.slice(0, 3).map(g => g.label || g);
   const results = [];
   for (const q of queries) {
     try {
       const [ol, olSubject, gbooks] = await Promise.all([
-        fetch(`${OL_SEARCH}?q=${encodeURIComponent(q)}&limit=8&lang=${lang === 'de' ? 'de' : 'en'}`).then(r => r.json()),
-        fetch(`${OL_SEARCH}?subject=${encodeURIComponent(q)}&limit=5`).then(r => r.json()),
-        fetch(`${GB_SEARCH}?q=${encodeURIComponent(q)}&maxResults=5&langRestrict=${lang}`).then(r => r.json())
+        fetch(`${OL_SEARCH}?q=${encodeURIComponent(q)}&limit=8&lang=${lang === 'de' ? 'de' : 'en'}`, { signal }).then(r => r.json()),
+        fetch(`${OL_SEARCH}?subject=${encodeURIComponent(q)}&limit=5`, { signal }).then(r => r.json()),
+        fetch(`${GB_SEARCH}?q=${encodeURIComponent(q)}&maxResults=5&langRestrict=${lang}`, { signal }).then(r => r.json())
       ]);
       if (ol.docs) {
         ol.docs.forEach(d => results.push({

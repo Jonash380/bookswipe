@@ -54,7 +54,8 @@ const LANG = {
     swipeActionSkip:'Uebergangen', notForMe:'Nicht fuer mich', seenIt:'Bereits gesehen',
     wrongMood:'Falscher Stimmung', notMyGenre:'Nicht mein Genre', otherReason:'Anderer Grund',
     feedbackTitle:'Warum interessiert dich das nicht?', fromWatchlist:'Aus Merkliste entfernt',
-    crossMediaTitle:'Auch fuer dich', noDescription:'Keine Beschreibung verfuegbar'
+    crossMediaTitle:'Auch fuer dich', noDescription:'Keine Beschreibung verfuegbar',
+    search:'Suchen', searchPlaceholder:'Titel oder Autor suchen...', searchNoResults:'Keine Ergebnisse fuer "{0}"'
   },
   en: {
     title:'BookSwipe', subtitle:'Discover books, movies & games', skip:'Skip', like:'Like',
@@ -86,7 +87,8 @@ const LANG = {
     swipeActionSkip:'Skipped', notForMe:'Not for me', seenIt:'Already seen it',
     wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other reason',
     feedbackTitle:'Why are you not interested?', fromWatchlist:'Removed from watchlist',
-    crossMediaTitle:'You might also like', noDescription:'No description available'
+    crossMediaTitle:'You might also like', noDescription:'No description available',
+    search:'Search', searchPlaceholder:'Search title or author...', searchNoResults:'No results for "{0}"'
   }
 };
 
@@ -635,7 +637,7 @@ class App {
     try {
       let items;
       if (this.state.mediaType === 'books') {
-        items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang);
+        items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang, signal);
       } else if (this.state.mediaType === 'games') {
         items = await fetchGamesForDiscovery(
           this.state.selectedGenres || [],
@@ -648,7 +650,10 @@ class App {
 
       if (signal.aborted) return;
 
-      let filtered = items.filter(i => !this.watchlist.find(w => w.id === i.id) && !this.disliked.find(d => d.id === i.id));
+      // Use Sets for O(1) lookup instead of O(n) .find()
+      const watchIds = new Set(this.watchlist.map(w => w.id));
+      const dislikedIds = new Set(this.disliked.map(d => d.id));
+      let filtered = items.filter(i => !watchIds.has(i.id) && !dislikedIds.has(i.id));
 
       if (this.state.blockedGenres?.length && this.state.mediaType !== 'books') {
         filtered = filtered.filter(item => {
@@ -680,13 +685,17 @@ class App {
       // Remove temporary score property
       const sortedCards = scoredCards.map(({ _score, ...card }) => card);
 
-      // Inject 15% serendipity (exploration vs exploitation)
+      // Inject 15% serendipity — random picks from middle tier (not best, not worst)
       if (sortedCards.length > 10) {
         const serendipityCount = Math.max(1, Math.floor(sortedCards.length * 0.15));
-        const topCards = sortedCards.slice(0, sortedCards.length - serendipityCount);
-        const wildCards = sortedCards.slice(sortedCards.length - serendipityCount);
-        shuffleArray(wildCards);
-        this.currentCards = [...topCards, ...wildCards];
+        const topEnd = Math.floor(sortedCards.length * 0.4);
+        const bottomStart = Math.floor(sortedCards.length * 0.75);
+        const topCards = sortedCards.slice(0, topEnd);
+        const middlePool = sortedCards.slice(topEnd, bottomStart);
+        const bottomCards = sortedCards.slice(bottomStart);
+        const wildCards = shuffleArray([...middlePool]).slice(0, serendipityCount);
+        const remaining = middlePool.filter(c => !wildCards.includes(c));
+        this.currentCards = [...topCards, ...wildCards, ...remaining, ...bottomCards];
       } else {
         this.currentCards = sortedCards;
       }
@@ -787,6 +796,7 @@ class App {
     app.innerHTML = `
       <div class="discover">
         <div class="discover-header">
+          <button class="search-toggle" data-action="search" aria-label="${this.tr.search}">🔍</button>
           <span class="card-count-badge">${this.t('cardCount', `${this.currentCardIndex + 1}/${this.currentCards.length}`)}</span>
           <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
@@ -860,6 +870,7 @@ class App {
       this.save();
       this.renderCards(app);
     });
+    app.querySelector('.search-toggle')?.addEventListener('click', () => this._showSearch(app));
     app.querySelector('.card-info-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this._showCardModal(card, app);
@@ -1402,6 +1413,164 @@ class App {
       }
     }
     return '';
+  }
+
+  // ===== SEARCH =====
+  _showSearch(app) {
+    const overlay = document.createElement('div');
+    overlay.className = 'search-overlay';
+    overlay.innerHTML = `
+      <div class="search-modal">
+        <div class="search-input-row">
+          <input type="text" class="search-input" placeholder="${this.tr.searchPlaceholder}" autofocus>
+          <button class="search-close">✕</button>
+        </div>
+        <div class="search-results"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    const input = overlay.querySelector('.search-input');
+    const results = overlay.querySelector('.search-results');
+    let debounce = null;
+
+    const close = () => {
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+    };
+
+    overlay.querySelector('.search-close')?.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    input.addEventListener('input', () => {
+      clearTimeout(debounce);
+      const q = input.value.trim();
+      if (q.length < 2) { results.innerHTML = ''; return; }
+      debounce = setTimeout(() => this._doSearch(q, results, app, close), 350);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+      if (e.key === 'Enter') {
+        clearTimeout(debounce);
+        const q = input.value.trim();
+        if (q.length >= 2) this._doSearch(q, results, app, close);
+      }
+    });
+  }
+
+  async _doSearch(query, container, app, closeFn) {
+    container.innerHTML = `<div class="search-loading">${this.tr.loading}</div>`;
+    const type = this.state.mediaType;
+    let items = [];
+
+    try {
+      if (type === 'books') {
+        const [ol, gb] = await Promise.all([
+          fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8`).then(r => r.json()),
+          fetch(`/proxy/gbooks/volumes?q=${encodeURIComponent(query)}&maxResults=5`).then(r => r.json())
+        ]);
+        if (ol.docs) {
+          ol.docs.forEach(d => items.push({
+            id: `ol-${d.key}`, title: d.title, author: d.author_name?.[0] || '',
+            cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : '',
+            year: d.first_publish_year, source: 'openlibrary', type: 'book'
+          }));
+        }
+        if (gb.items) {
+          gb.items.forEach(gb => {
+            const vi = gb.volumeInfo;
+            items.push({
+              id: `gb-${gb.id}`, title: vi.title, author: vi.authors?.[0] || '',
+              cover: vi.imageLinks?.thumbnail || '',
+              year: parseInt(vi.publishedDate) || null, source: 'gbooks', type: 'book',
+              description: vi.description
+            });
+          });
+        }
+      } else if (type === 'games') {
+        const encoded = encodeURIComponent(`search "${query.replace(/"/g, '\\"')}"; fields id,name,slug,summary,cover.url,genres.name,platforms.name,platforms.abbreviation,first_release_date,total_rating; limit 8;`);
+        const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
+        if (r.ok) {
+          const data = await r.json();
+          if (Array.isArray(data)) {
+            data.forEach(g => {
+              const coverUrl = g.cover?.url ? g.cover.url.replace('thumb', 'cover_big').replace('//', 'https://') : '';
+              items.push({
+                id: `igdb-${g.id}`, igdb_id: g.id, title: g.name, slug: g.slug,
+                cover: coverUrl, overview: g.summary || '',
+                genres: (g.genres || []).map(gen => gen.name),
+                platforms: (g.platforms || []).map(p => ({ id: p.id, name: p.name, abbr: p.abbreviation || p.name })),
+                year: g.first_release_date ? new Date(g.first_release_date * 1000).getFullYear() : null,
+                rating: g.total_rating ? Math.round(g.total_rating / 10) : null,
+                source: 'igdb', type: 'game'
+              });
+            });
+          }
+        }
+      } else {
+        const r = await fetch(`/proxy/tmdb/search/multi?query=${encodeURIComponent(query)}&language=${this.lang}`);
+        if (r.ok) {
+          const data = await r.json();
+          (data.results || []).slice(0, 8).forEach(m => {
+            if (m.media_type === 'person') return;
+            items.push({
+              id: `tmdb-${m.id}`, tmdb_id: m.id, title: m.title || m.name,
+              cover: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : '',
+              year: parseInt((m.release_date || m.first_air_date || '').slice(0, 4)) || null,
+              overview: m.overview, genres: m.genre_ids, source: 'tmdb',
+              type: m.media_type || this.state.mediaType
+            });
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Search error:', e);
+    }
+
+    if (!items.length) {
+      container.innerHTML = `<div class="search-empty">${this.t('searchNoResults', query)}</div>`;
+      return;
+    }
+
+    container.innerHTML = items.map(item => `
+      <div class="search-result" data-id="${escapeHTML(item.id)}">
+        ${item.cover ? `<img class="sr-cover" src="${escapeHTML(item.cover)}" alt="">` : `<div class="sr-cover placeholder">${item.type === 'game' ? '🎮' : '📚'}</div>`}
+        <div class="sr-info">
+          <strong>${escapeHTML(item.title)}</strong>
+          ${item.author ? `<span class="sr-meta">${escapeHTML(item.author)}</span>` : ''}
+          ${item.year ? `<span class="sr-meta">${item.year}</span>` : ''}
+        </div>
+        <button class="btn btn-sm btn-like sr-add" data-id="${escapeHTML(item.id)}">+</button>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.sr-add').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = items.find(i => i.id === btn.dataset.id);
+        if (item && !this.watchlist.find(w => w.id === item.id)) {
+          this.watchlist.push(item);
+          await addToWatchlist(item);
+          await this.save();
+          btn.textContent = '✓';
+          btn.disabled = true;
+          showToast(`${item.title} added!`, { type: 'success', duration: 1500 });
+        }
+      });
+    });
+
+    container.querySelectorAll('.search-result').forEach(el => {
+      el.addEventListener('click', () => {
+        const item = items.find(i => i.id === el.dataset.id);
+        if (item) {
+          closeFn();
+          this.currentCards.unshift(item);
+          this.currentCardIndex = 0;
+          this.renderCards(app);
+        }
+      });
+    });
   }
 
   _renderStreamingButtons(card) {
