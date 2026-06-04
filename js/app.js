@@ -19,7 +19,7 @@ import {
   getUIState, setUIState,
   getFullWatchlist
 } from './storage.js';
-import { createAbortable, getErrorMessage } from './api-client.js';
+import { createAbortable, getErrorMessage, fetchDeduped } from './api-client.js';
 import { showToast, dismissToast, clearAllToasts } from './toast.js';
 
 // ===== CONSTANTS =====
@@ -503,7 +503,7 @@ class App {
         { id:'rf-b4', title:'Die unendliche Geschichte', year:1979, cover:'', genres:['fantasy'], author:'Michael Ende', source:'rapid-fire', type:'book' },
         { id:'rf-b5', title:'Der Steppenwolf', year:1927, cover:'', genres:['historical'], author:'Hermann Hesse', source:'rapid-fire', type:'book' },
         { id:'rf-b6', title:'Tschick', year:2010, cover:'', genres:['ya'], author:'Wolfgang Herrndorf', source:'rapid-fire', type:'book' },
-        { id:'rf-b7', title:'Das Parfum', year:1985, cover:'', genres:['thriller'], author:'Patrick Sue/skind', source:'rapid-fire', type:'book' },
+        { id:'rf-b7', title:'Das Parfum', year:1985, cover:'', genres:['thriller'], author:'Patrick Süskind', source:'rapid-fire', type:'book' },
         { id:'rf-b8', title:'Fahrenheit 451', year:1953, cover:'', genres:['scifi'], author:'Ray Bradbury', source:'rapid-fire', type:'book' },
         { id:'rf-b9', title:'Die Vermessung der Welt', year:2005, cover:'', genres:['historical'], author:'Daniel Kehlmann', source:'rapid-fire', type:'book' },
         { id:'rf-b10', title:'Eragon', year:2003, cover:'', genres:['fantasy'], author:'Christopher Paolini', source:'rapid-fire', type:'book' }
@@ -609,17 +609,10 @@ class App {
         <p>${escapeHTML(msg)}</p>
         ${error.message ? `<p class="error-details">${escapeHTML(error.message)}</p>` : ''}
         <button class="btn btn-primary btn-retry">${this.t('retry')}</button>
-        <nav class="bottom-nav">
-          <button class="nav-btn active" data-view="discover">🔍 ${this.tr.discover}</button>
-          <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
-          <button class="nav-btn" data-view="history">📖</button>
-          <button class="nav-btn" data-view="stats">📊</button>
-        </nav>
+        ${this._navHTML('discover')}
       </div>`;
     app.querySelector('.btn-retry')?.addEventListener('click', onRetry);
-    app.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
-    });
+    this._bindNav(app);
   }
 
   // ===== DISCOVER (with recommender sorting, error handling, enrichment) =====
@@ -804,7 +797,7 @@ class App {
         </div>
         <div class="card-stack">
           <div class="${cardClass}" data-id="${escapeHTML(card.id)}">
-            ${card.cover ? `<img class="card-cover" style="${coverStyle}" src="${escapeHTML(card.cover)}" alt="${escapeHTML(card.title)}">` : `<div class="card-cover placeholder">${isGame ? '🎮' : '📚'}</div>`}
+            ${card.cover ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.cover)}" alt="${escapeHTML(card.title)}">` : `<div class="card-cover placeholder">${isGame ? '🎮' : '📚'}</div>`}
             ${isBlindGame ? `
               <div class="blind-game-overlay">
                 <div class="blind-game-mechanics">${blindGameMechanics}</div>
@@ -840,12 +833,7 @@ class App {
           <button class="btn btn-skip" aria-label="${this.tr.skip}">⏭ ${this.tr.skip}</button>
           <button class="btn btn-like" aria-label="${this.tr.like}">❤️ ${this.tr.like}</button>
         </div>
-        <nav class="bottom-nav">
-          <button class="nav-btn active" data-view="discover">🔍 ${this.tr.discover}</button>
-          <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
-          <button class="nav-btn" data-view="history">📖</button>
-          <button class="nav-btn" data-view="stats">📊</button>
-        </nav>
+        ${this._navHTML('discover')}
       </div>`;
 
     const cardEl = app.querySelector('.card');
@@ -858,6 +846,7 @@ class App {
         const ag = this._setupAmbientGlow(cardEl, card);
         const tl = this._setupTiltEffect(cardEl);
         if (hp) this._cardCleanupFns.push(hp);
+        if (ag) this._cardCleanupFns.push(ag);
         if (tl) this._cardCleanupFns.push(tl);
       }
     }
@@ -879,9 +868,7 @@ class App {
       if (e.target.closest('.card-info-btn')) return;
       this._showCardModal(card, app);
     });
-    app.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
-    });
+    this._bindNav(app);
 
     // Long-press to show feedback modal
     this._setupLongPress(cardEl, card);
@@ -894,6 +881,7 @@ class App {
     let startY = 0;
 
     const startPress = (e) => {
+      if (this.swipeEngine?.swiping) return;
       const touch = e.touches ? e.touches[0] : e;
       startX = touch.clientX;
       startY = touch.clientY;
@@ -1184,11 +1172,13 @@ class App {
   }
 
   _setupAmbientGlow(cardEl, card) {
-    if (!card.cover) return;
+    if (!card.cover) return null;
+    let loaded = false;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = card.cover;
     img.onload = () => {
+      if (!loaded || !cardEl.isConnected) return;
       try {
         const canvas = document.createElement('canvas');
         canvas.width = 40;
@@ -1207,6 +1197,8 @@ class App {
         cardEl.classList.add('has-ambient');
       } catch(e) {}
     };
+    loaded = true;
+    return () => { loaded = false; img.onload = null; };
   }
 
   _setupTiltEffect(cardEl) {
@@ -1422,7 +1414,7 @@ class App {
     overlay.innerHTML = `
       <div class="search-modal">
         <div class="search-input-row">
-          <input type="text" class="search-input" placeholder="${this.tr.searchPlaceholder}" autofocus>
+          <input type="text" class="search-input" placeholder="${this.tr.searchPlaceholder}" autofocus aria-label="${this.tr.search}" role="searchbox">
           <button class="search-close">✕</button>
         </div>
         <div class="search-results"></div>
@@ -1467,8 +1459,8 @@ class App {
     try {
       if (type === 'books') {
         const [ol, gb] = await Promise.all([
-          fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8`).then(r => r.json()),
-          fetch(`/proxy/gbooks/volumes?q=${encodeURIComponent(query)}&maxResults=5`).then(r => r.json())
+          fetchDeduped(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8`).then(r => r.json()),
+          fetchDeduped(`/proxy/gbooks/volumes?q=${encodeURIComponent(query)}&maxResults=5`).then(r => r.json())
         ]);
         if (ol.docs) {
           ol.docs.forEach(d => items.push({
@@ -1489,27 +1481,15 @@ class App {
           });
         }
       } else if (type === 'games') {
-        const encoded = encodeURIComponent(`search "${query.replace(/"/g, '\\"')}"; fields id,name,slug,summary,cover.url,genres.name,platforms.name,platforms.abbreviation,first_release_date,total_rating; limit 8;`);
-        const r = await fetch(`/proxy/igdb/games?body=${encoded}`);
-        if (r.ok) {
-          const data = await r.json();
-          if (Array.isArray(data)) {
-            data.forEach(g => {
-              const coverUrl = g.cover?.url ? g.cover.url.replace('thumb', 'cover_big').replace('//', 'https://') : '';
-              items.push({
-                id: `igdb-${g.id}`, igdb_id: g.id, title: g.name, slug: g.slug,
-                cover: coverUrl, overview: g.summary || '',
-                genres: (g.genres || []).map(gen => gen.name),
-                platforms: (g.platforms || []).map(p => ({ id: p.id, name: p.name, abbr: p.abbreviation || p.name })),
-                year: g.first_release_date ? new Date(g.first_release_date * 1000).getFullYear() : null,
-                rating: g.total_rating ? Math.round(g.total_rating / 10) : null,
-                source: 'igdb', type: 'game'
-              });
-            });
-          }
-        }
+        const results = await searchGames(query, 8);
+        items = results.map(g => ({
+          id: g.id, igdb_id: g.igdb_id, title: g.title, slug: g.slug,
+          cover: g.cover, overview: g.overview, genres: g.genres,
+          platforms: g.platforms, year: g.year, rating: g.rating,
+          source: 'igdb', type: 'game'
+        }));
       } else {
-        const r = await fetch(`/proxy/tmdb/search/multi?query=${encodeURIComponent(query)}&language=${this.lang}`);
+        const r = await fetchDeduped(`/proxy/tmdb/search/multi?query=${encodeURIComponent(query)}&language=${this.lang}`);
         if (r.ok) {
           const data = await r.json();
           (data.results || []).slice(0, 8).forEach(m => {
@@ -1627,6 +1607,19 @@ class App {
   }
 
   // ===== VIEW ROUTING =====
+  _navHTML(active) {
+    return `<nav class="bottom-nav">
+      <button class="nav-btn${active==='discover'?' active':''}" data-view="discover">🔍 ${this.tr.discover}</button>
+      <button class="nav-btn${active==='watchlist'?' active':''}" data-view="watchlist">📝 ${this.watchlist.length}</button>
+      <button class="nav-btn${active==='history'?' active':''}" data-view="history">📖</button>
+      <button class="nav-btn${active==='stats'?' active':''}" data-view="stats">📊</button>
+    </nav>`;
+  }
+  _bindNav(app) {
+    app.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
+    });
+  }
   renderView(view, app) {
     if (view === 'watchlist') return this.renderWatchlist(app);
     if (view === 'history') return this.renderHistory(app);
@@ -1662,12 +1655,7 @@ class App {
           <button class="btn btn-share-dna">🔗 ${this.tr.dnaLink}</button>
         </div>
         <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
-        <nav class="bottom-nav">
-          <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
-          <button class="nav-btn active" data-view="watchlist">📝 ${this.watchlist.length}</button>
-          <button class="nav-btn" data-view="history">📖</button>
-          <button class="nav-btn" data-view="stats">📊</button>
-        </nav>
+        ${this._navHTML('watchlist')}
       </div>`;
     app.querySelectorAll('.btn-remove').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1682,9 +1670,7 @@ class App {
     app.querySelector('.btn-share-dna')?.addEventListener('click', () => this.shareDNA());
     app.querySelector('.btn-roulette')?.addEventListener('click', () => this._showRoulette(app));
     app.querySelector('.btn-back')?.addEventListener('click', () => this.renderDiscover(app));
-    app.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
-    });
+    this._bindNav(app);
   }
 
   _showRoulette(app) {
@@ -1714,24 +1700,25 @@ class App {
       btnSpin.disabled = true;
       spins = 0;
       let speed = 80;
-      const interval = setInterval(() => {
+      const doTick = () => {
         currentIdx = (currentIdx + 1) % items.length;
         const item = items[currentIdx];
         display.innerHTML = item.cover ? `<img src="${escapeHTML(item.cover)}" alt="">` : '';
         display.innerHTML += `<span>${escapeHTML(item.title)}</span>`;
         display.classList.add('spinning');
         spins++;
-        // Accelerate then decelerate
         if (spins < 5) speed = Math.max(30, speed - 10);
         else if (spins > maxSpins - 5) speed = Math.min(200, speed + 30);
         if (spins >= maxSpins) {
-          clearInterval(interval);
           display.classList.remove('spinning');
           display.classList.add('landed');
           btnSpin.disabled = false;
           this._spawnConfetti(modal);
+          return;
         }
-      }, speed);
+        setTimeout(doTick, speed);
+      };
+      doTick();
     };
     btnSpin?.addEventListener('click', doSpin);
     modal.addEventListener('click', (e) => {
@@ -1767,17 +1754,10 @@ class App {
         <h2>${this.tr.history}</h2>
         <div class="list">${items || `<p class="empty">${this.tr.empty}</p>`}</div>
         <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
-        <nav class="bottom-nav">
-          <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
-          <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
-          <button class="nav-btn active" data-view="history">📖</button>
-          <button class="nav-btn" data-view="stats">📊</button>
-        </nav>
+        ${this._navHTML('history')}
       </div>`;
     app.querySelector('.btn-back')?.addEventListener('click', () => this.renderDiscover(app));
-    app.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
-    });
+    this._bindNav(app);
   }
 
   renderStats(app) {
@@ -1838,17 +1818,10 @@ class App {
             <div class="genre-bar"><span>${escapeHTML(g)}</span><div class="bar-fill" style="width:${Math.min(c / total * 100, 100)}%"></div><span>${c}</span></div>
           `).join('')}</div>` : ''}
         <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
-        <nav class="bottom-nav">
-          <button class="nav-btn" data-view="discover">🔍 ${this.tr.discover}</button>
-          <button class="nav-btn" data-view="watchlist">📝 ${this.watchlist.length}</button>
-          <button class="nav-btn" data-view="history">📖</button>
-          <button class="nav-btn active" data-view="stats">📊</button>
-        </nav>
+        ${this._navHTML('stats')}
       </div>`;
     app.querySelector('.btn-back')?.addEventListener('click', () => this.renderDiscover(app));
-    app.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => this.renderView(btn.dataset.view, app));
-    });
+    this._bindNav(app);
   }
 
   _getPersonaBadge() {

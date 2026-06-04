@@ -1,4 +1,4 @@
-import { getTraktTags, setTraktTags, getEnrichedItem, setEnrichedItem } from './db.js';
+import { getTraktTags, setTraktTags, getEnrichedItem, setEnrichedItem } from './storage.js';
 import { mapTMDBTags, computeVibeScores } from './tag_mapper.js';
 import { generateElevatorPitchFull, detectSpoilers } from './descriptions.js';
 import { mapGameTags } from './tag_mapper.js';

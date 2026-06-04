@@ -255,7 +255,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', len(body))
-        self.send_header('Cache-Control', 'public, max-age=300')
+        if status >= 400:
+            self.send_header('Cache-Control', 'no-store')
+        else:
+            self.send_header('Cache-Control', 'public, max-age=300')
         self.end_headers()
         self.wfile.write(body)
 

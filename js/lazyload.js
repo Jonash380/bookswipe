@@ -38,10 +38,14 @@ export class LazyLoader {
   }
 }
 
+let _sharedLoader = null;
+function getSharedLoader() {
+  if (!_sharedLoader) _sharedLoader = new LazyLoader();
+  return _sharedLoader;
+}
 export function lazyLoadImage(img, src) {
   if (!img || !src) return;
-  const loader = new LazyLoader();
-  loader.observe(img, (el) => {
+  getSharedLoader().observe(img, (el) => {
     el.src = src;
     el.classList.add('loaded');
   });

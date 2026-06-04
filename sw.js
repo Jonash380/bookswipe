@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bookswipe-v3';
+const CACHE_NAME = 'bookswipe-v4';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -19,7 +19,6 @@ const STATIC_ASSETS = [
   '/js/storage.js',
   '/js/api-client.js',
   '/js/toast.js',
-  '/js/db.js',
   '/static/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png'
@@ -44,10 +43,16 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // API requests: network first, cache fallback
+  // API requests: network first, cache fallback + store successful responses
   if (url.pathname.startsWith('/proxy/') || url.pathname.includes('image.tmdb.org')) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request).then(response => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(event.request))
     );
     return;
   }

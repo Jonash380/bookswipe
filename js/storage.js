@@ -207,3 +207,45 @@ export async function clearAllData() {
   localStorage.removeItem('bs-migrated-v3');
   console.log('[Storage] All data cleared');
 }
+
+/** Tags cache (migrated from db.js) */
+export async function getTraktTags(tmdbId) {
+  try {
+    const db = await getDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction('tags', 'readonly');
+      const r = tx.objectStore('tags').get(String(tmdbId));
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => resolve([]);
+    });
+  } catch { return []; }
+}
+
+export async function setTraktTags(tmdbId, tags) {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('tags', 'readwrite');
+    tx.objectStore('tags').put(tags, String(tmdbId));
+  } catch (e) { console.warn('[Storage] setTraktTags error:', e); }
+}
+
+/** Enriched item cache (migrated from db.js) */
+export async function getEnrichedItem(id) {
+  try {
+    const db = await getDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction('enriched', 'readonly');
+      const r = tx.objectStore('enriched').get(String(id));
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+
+export async function setEnrichedItem(id, data) {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('enriched', 'readwrite');
+    tx.objectStore('enriched').put(data, String(id));
+  } catch (e) { console.warn('[Storage] setEnrichedItem error:', e); }
+}
