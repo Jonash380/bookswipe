@@ -57,6 +57,7 @@ TRAKT_KEY = os.environ.get('TRAKT_API_KEY', '')
 TWITCH_CLIENT_ID = os.environ.get('TWITCH_CLIENT_ID', '')
 TWITCH_CLIENT_SECRET = os.environ.get('TWITCH_CLIENT_SECRET', '')
 STEAM_CC = os.environ.get('STEAM_CC', 'us')  # Country code for pricing
+STEAM_API_KEY = os.environ.get('STEAM_API_KEY', '')  # Steam Web API key (optional)
 
 _igdb_token = None
 _igdb_token_expires = 0
@@ -426,6 +427,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._steam_reviews(params)
         if path.startswith('search'):
             return self._steam_search(params, cc)
+        if path.startswith('library'):
+            return self._steam_library(params)
         return self._json({'error': 'Unknown Steam endpoint', 'status': 404}, 404)
 
     def _steam_appdetails(self, params, cc):
@@ -504,6 +507,71 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if data:
             _cache.set(cache_key, data)
         return self._json(data or {})
+
+    def _steam_library(self, params):
+        """Fetch user's owned games from Steam Web API"""
+        steam_id = params.get('steamid', [''])[0]
+        api_key = params.get('api_key', [STEAM_API_KEY])[0]
+        
+        if not steam_id:
+            return self._json({'error': 'Missing steamid parameter', 'status': 400}, 400)
+        if not api_key:
+            return self._json({'error': 'Steam API key required. Set STEAM_API_KEY env var or provide api_key parameter.', 'status': 400}, 400)
+        
+        cache_key = f'steam:library:{steam_id}'
+        cached = _cache.get(cache_key, 3600)  # Cache for 1 hour
+        if cached is not None:
+            return self._json(cached)
+        
+        # Fetch owned games from Steam Web API
+        url = (
+            f'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/'
+            f'?key={api_key}&steamid={steam_id}&include_appinfo=1'
+            f'&include_played_free_games=1&format=json'
+        )
+        
+        try:
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'BookSwipe/1.0')
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+                
+            if 'response' not in data:
+                return self._json({'error': 'Invalid Steam API response', 'status': 502}, 502)
+            
+            response = data['response']
+            games = response.get('games', [])
+            game_count = response.get('game_count', 0)
+            
+            # Map to our format
+            library = []
+            for g in (games or []):
+                library.append({
+                    'appId': g.get('appid'),
+                    'name': g.get('name', ''),
+                    'playtimeMinutes': g.get('playtime_forever', 0),
+                    'playtime2Weeks': g.get('playtime_2weeks', 0),
+                    'imgIconUrl': g.get('img_icon_url', ''),
+                    'imgLogoUrl': g.get('img_logo_url', ''),
+                    'communityVisibleStats': g.get('community_visible_stats', False)
+                })
+            
+            result = {
+                'steamId': steam_id,
+                'gameCount': game_count,
+                'games': library,
+                'fetchedAt': int(time.time())
+            }
+            
+            _cache.set(cache_key, result)
+            return self._json(result)
+            
+        except urllib.error.HTTPError as e:
+            log.warning('Steam Library HTTP %d for %s', e.code, steam_id)
+            return self._json({'error': f'Steam API error: {e.code}', 'status': e.code}, e.code)
+        except Exception as e:
+            log.warning('Steam Library error: %s', e)
+            return self._json({'error': str(e), 'status': 500}, 500)
 
     def _fetch_steam(self, url):
         """Fetch from Steam Store with proper headers to avoid bot detection."""

@@ -98,7 +98,7 @@ export function renderPickForMe(app, profile, receivedPick) {
     (receivedPick.items || []).forEach(item => {
       html += `
         <div class="pick-item">
-          ${item.cover ? `<img src="${item.cover}" alt="" class="pick-cover" onerror="handleCoverError.call(this)">` : `<div class="pick-cover placeholder">🎬</div>`}
+          ${item.cover ? `<img src="${item.cover}" alt="" class="pick-cover" onerror="this.onerror=null;this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2280%22 height=%22120%22><rect fill=%22%23333%22 width=%2280%22 height=%22120%22/><text x=%2240%22 y=%2265%22 text-anchor=%22middle%22 fill=%22%23888%22 font-size=%2240%22>🎬</text></svg>'">` : `<div class="pick-cover placeholder">🎬</div>`}
           <div class="pick-info">
             <strong>${item.title}</strong>
             ${item.year ? `<span>${item.year}</span>` : ''}

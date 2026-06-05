@@ -9,7 +9,7 @@ import { Recommender } from './recommender.js';
 import { getTMDBDetails, searchTMDB, getTMDBVideos } from './tmdb.js';
 import { renderVibeBars, detectSpoilers, generateElevatorPitchFull } from './descriptions.js';
 import { mapTMDBTags, computeVibeScores, mapGameTags, mapMediaDNA } from './tag_mapper.js';
-import { searchGames, fetchGamesByGenre, fetchPopularGames, fetchGamesForDiscovery } from './games_api.js';
+import { searchGames, fetchGamesByGenre, fetchPopularGames, fetchGamesForDiscovery, enrichGamesWithSteam } from './games_api.js';
 import {
   migrateFromLocalStorage,
   getWatchlist, addToWatchlist, removeFromWatchlist,
@@ -33,7 +33,15 @@ const LANG = {
     share:'Teilen', whoWatching:'Wer schaut zu?', solo:'Allein', dateNight:'Date Night', family:'Familie',
     blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Fuer bessere Empfehlungen',
     familySub:'Horror und Crime raus automatisch', dateNightSub:'Romance & Thriller hoch',
-    soloSub:'Du hast die Kontrolle',
+    soloSub:'Du hast die Kontrolle', moodTime:'Stimmung + Zeit', moodTimeTitle:'Was moechtest du spielen?',
+    moodTimeSub:'Waehle deine Stimmung und verfuegbare Zeit',
+    quickPlay:'Kurz (15-30 Min)', mediumPlay:'Mittel (1-2 Std)', longPlay:'Lang (3+ Std)', anyPlay:'Egal',
+    cozy:'Gemütlich', intense:'Intensiv', chill:'Entspannt', competitive:'Kompetitiv',
+    applyFilter:'Anwenden', clearFilter:'Zuruecksetzen', filterActive:'Filter aktiv',
+    steamLibrary:'Steam Bibliothek', steamImport:'Importieren', steamId:'Steam ID',
+    steamApiKey:'Steam API Key', steamImporting:'Importiere...', steamImported:'Importiert',
+    steamImportError:'Import fehlgeschlagen', steamLibraryCount:'{0} Spiele in Bibliothek',
+    inLibrary:'In Bibliothek', backlogShuffle:'Backlog Shuffle',
     persona:'Dein Geschmack', antiTaste:'Was du hasst', antiTasteSub:'Aus deinem Feed verbannt',
     weeklyVibe:'Wochen-Vibe', pickForUs:'Ueberrasch mich!', dnaLink:'DNA teilen',
     playOn:'Jetzt auf {0}', whySeeing:'Warum das?', matchReason:'Passt zu dir',
@@ -65,7 +73,15 @@ const LANG = {
     share:'Share', whoWatching:'Who\'s watching?', solo:'Solo', dateNight:'Date Night', family:'Family',
     blindDate:'Blind Date', rapidFire:'Rapid Fire', whoWatchingSub:'For better picks',
     familySub:'Horror and crime filtered out', dateNightSub:'Romance & Thriller up',
-    soloSub:'You\'re in control',
+    soloSub:'You\'re in control', moodTime:'Mood + Time', moodTimeTitle:'What do you want to play?',
+    moodTimeSub:'Choose your mood and available time',
+    quickPlay:'Quick (15-30 min)', mediumPlay:'Medium (1-2 hrs)', longPlay:'Long (3+ hrs)', anyPlay:'Any',
+    cozy:'Cozy', intense:'Intense', chill:'Chill', competitive:'Competitive',
+    applyFilter:'Apply', clearFilter:'Clear', filterActive:'Filter active',
+    steamLibrary:'Steam Library', steamImport:'Import', steamId:'Steam ID',
+    steamApiKey:'Steam API Key', steamImporting:'Importing...', steamImported:'Imported',
+    steamImportError:'Import failed', steamLibraryCount:'{0} games in library',
+    inLibrary:'In Library', backlogShuffle:'Backlog Shuffle',
     persona:'Your Taste', antiTaste:'What you hate', antiTasteSub:'Banned from your feed',
     weeklyVibe:'Weekly Vibe', pickForUs:'Pick for Us!', dnaLink:'Share DNA',
     playOn:'▶ {0}', whySeeing:'Why this?', matchReason:'Matches you',
@@ -155,7 +171,9 @@ class App {
       hasCompletedOnboarding: false, hasCompletedQuiz: false,
       watchMode: 'solo', onboardingStep: 0, blindDateMode: false,
       wildcardFrequency: 50,
-      blockedGenres: [], boostedMoods: [], selectedPlatforms: []
+      blockedGenres: [], boostedMoods: [], selectedPlatforms: [],
+      moodTimeFilter: { active: false, mood: null, playtime: null },
+      steamLibrary: { steamId: '', apiKey: '', imported: false, gameCount: 0, lastFetch: 0 }
     };
     this.watchlist = [];
     this.disliked = [];
@@ -243,6 +261,16 @@ class App {
     this.history = await getHistory();
     const profile = await getRecProfile();
     if (profile) this.recommender.profile = profile;
+    
+    // Load Steam library from IndexedDB if available
+    try {
+      const steamLibrary = await safeGetJSON('bs-steam-library');
+      if (steamLibrary && steamLibrary.imported) {
+        this.state.steamLibrary = steamLibrary;
+      }
+    } catch (e) {
+      console.warn('Failed to load Steam library:', e);
+    }
   }
 
   async save() {
@@ -789,6 +817,7 @@ class App {
           this.state.selectedPlatforms || [],
           40
         );
+        items = await enrichGamesWithSteam(items);
       } else {
         items = await this.fetchMedia(signal);
       }
@@ -808,6 +837,11 @@ class App {
           });
           return !this.state.blockedGenres.some(bg => itemGenres.includes(bg.toLowerCase()));
         });
+      }
+
+      // Apply mood/time filter for games
+      if (this.state.moodTimeFilter.active && this.state.mediaType === 'games') {
+        filtered = this._applyMoodTimeFilter(filtered);
       }
 
       // Enrich items in background
@@ -834,7 +868,7 @@ class App {
         // Treatment: MMR diversity — inject diverse picks near the top
         const forRerank = scoredCards.map(c => ({ ...c, _mmrScore: c._score }));
         const reranked = this.recommender.mmrRerank(forRerank, diversityCount);
-        this.currentCards = reranked.map(({ _score, _mmrScore, ...card }) => card);
+        this.currentCards = reranked.map(({ _mmrScore, ...card }) => card);
       } else if (diversityCount > 0 && this.experiment.group === 'control') {
         // Control: random serendipity — pick random mid-tier cards to mix up
         const midStart = Math.floor(scoredCards.length * 0.2);
@@ -858,11 +892,9 @@ class App {
             reorder.push(rest[ri++]);
           } else break;
         }
-        this.currentCards = reorder.map(({ _score, ...card }) => card);
+        this.currentCards = reorder;
       } else {
-        // Remove temporary score property
-        const sortedCards = scoredCards.map(({ _score, ...card }) => card);
-        this.currentCards = sortedCards;
+        this.currentCards = scoredCards;
       }
       // Track refetch for experiment metrics
       this.experiment.trackRefetch();
@@ -1054,6 +1086,16 @@ class App {
           <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
           </button>
+          ${isGame ? `
+            <button class="mood-time-toggle ${this.state.moodTimeFilter.active ? 'active' : ''}" data-toggle="mood-time" aria-label="${this.tr.moodTime}">
+              🎯 ${this.tr.moodTime}
+              ${this.state.moodTimeFilter.active ? `<span class="mood-time-badge">${this.state.moodTimeFilter.mood ? '🎭' : '⏱️'}</span>` : ''}
+            </button>
+            <button class="steam-library-toggle ${this.state.steamLibrary.imported ? 'active' : ''}" data-toggle="steam-library" aria-label="${this.tr.steamLibrary}">
+              🎮 ${this.tr.steamLibrary}
+              ${this.state.steamLibrary.imported ? `<span class="steam-library-badge">${this.state.steamLibrary.gameCount}</span>` : ''}
+            </button>
+          ` : ''}
           ${isBlind ? `
             <div class="wildcard-freq-row">
               <span class="wildcard-freq-label">${this.lang === 'de' ? 'Wildcards:' : 'Wildcards:'}</span>
@@ -1115,6 +1157,7 @@ class App {
               `}
             ` : ''}
             ${isGame && !isBlindGame ? `
+              ${this._isInLibrary(card) ? `<div class="in-library-badge">🎮 ${this.tr.inLibrary}</div>` : ''}
               <div class="game-card-badges">
                 ${platformBadges}
                 ${playtimeBadge}
@@ -1164,6 +1207,12 @@ class App {
       this.state.blindDateMode = !this.state.blindDateMode;
       this.save();
       this.renderCards(app);
+    });
+    app.querySelector('.mood-time-toggle')?.addEventListener('click', () => {
+      this._showMoodTimeModal(app);
+    });
+    app.querySelector('.steam-library-toggle')?.addEventListener('click', () => {
+      this._showSteamLibraryModal(app);
     });
     app.querySelectorAll('.wildcard-freq-chip').forEach(chip => {
       chip.addEventListener('click', () => {
@@ -1460,6 +1509,339 @@ class App {
     }
     // Nope the card after feedback
     this.handleSwipe('left');
+  }
+
+  // ===== MOOD + TIME SELECTOR MODAL =====
+  _showMoodTimeModal(app) {
+    const de = this.lang === 'de';
+    const overlay = document.createElement('div');
+    overlay.className = 'mood-time-overlay';
+    
+    const moods = [
+      { id: 'cozy', icon: '☕', label: this.tr.cozy },
+      { id: 'intense', icon: '🔥', label: this.tr.intense },
+      { id: 'chill', icon: '🌊', label: this.tr.chill },
+      { id: 'competitive', icon: '🏆', label: this.tr.competitive }
+    ];
+    
+    const playtimes = [
+      { id: 'quick', icon: '⚡', label: this.tr.quickPlay, max: 30 },
+      { id: 'medium', icon: '⏱️', label: this.tr.mediumPlay, max: 120 },
+      { id: 'long', icon: '📚', label: this.tr.longPlay, max: 999 },
+      { id: 'any', icon: '♾️', label: this.tr.anyPlay, max: 9999 }
+    ];
+    
+    const currentMood = this.state.moodTimeFilter.mood;
+    const currentPlaytime = this.state.moodTimeFilter.playtime;
+    
+    overlay.innerHTML = `
+      <div class="mood-time-modal">
+        <button class="modal-close" aria-label="Close">✕</button>
+        <h3>🎯 ${this.tr.moodTimeTitle}</h3>
+        <p class="mood-time-subtitle">${this.tr.moodTimeSub}</p>
+        
+        <div class="mood-time-section">
+          <h4>${de ? 'Stimmung' : 'Mood'}</h4>
+          <div class="mood-options">
+            ${moods.map(m => `
+              <button class="mood-option ${currentMood === m.id ? 'active' : ''}" data-mood="${m.id}">
+                <span class="mood-icon">${m.icon}</span>
+                <span class="mood-label">${m.label}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        
+        <div class="mood-time-section">
+          <h4>${de ? 'Verfuegbare Zeit' : 'Available Time'}</h4>
+          <div class="playtime-options">
+            ${playtimes.map(p => `
+              <button class="playtime-option ${currentPlaytime === p.id ? 'active' : ''}" data-playtime="${p.id}">
+                <span class="playtime-icon">${p.icon}</span>
+                <span class="playtime-label">${p.label}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        
+        <div class="mood-time-actions">
+          <button class="btn btn-secondary mood-time-clear">${this.tr.clearFilter}</button>
+          <button class="btn btn-primary mood-time-apply">${this.tr.applyFilter}</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+    
+    // Mood selection
+    overlay.querySelectorAll('.mood-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overlay.querySelectorAll('.mood-option').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+    
+    // Playtime selection
+    overlay.querySelectorAll('.playtime-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overlay.querySelectorAll('.playtime-option').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+    
+    // Clear button
+    overlay.querySelector('.mood-time-clear').addEventListener('click', () => {
+      this.state.moodTimeFilter = { active: false, mood: null, playtime: null };
+      this.save();
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+      this.renderCards(app);
+    });
+    
+    // Apply button
+    overlay.querySelector('.mood-time-apply').addEventListener('click', () => {
+      const selectedMood = overlay.querySelector('.mood-option.active')?.dataset.mood;
+      const selectedPlaytime = overlay.querySelector('.playtime-option.active')?.dataset.playtime;
+      
+      this.state.moodTimeFilter = {
+        active: !!(selectedMood || selectedPlaytime),
+        mood: selectedMood || null,
+        playtime: selectedPlaytime || null
+      };
+      this.save();
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+      this.renderCards(app);
+    });
+    
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      }
+    });
+    
+    // Close button
+    overlay.querySelector('.modal-close').addEventListener('click', () => {
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+    });
+  }
+
+  // ===== STEAM LIBRARY IMPORT MODAL =====
+  _showSteamLibraryModal(app) {
+    const de = this.lang === 'de';
+    const overlay = document.createElement('div');
+    overlay.className = 'steam-library-overlay';
+    
+    const { steamId, apiKey, imported, gameCount, lastFetch } = this.state.steamLibrary;
+    const hasImported = imported && gameCount > 0;
+    const lastFetchDate = lastFetch ? new Date(lastFetch * 1000).toLocaleDateString() : '';
+    
+    overlay.innerHTML = `
+      <div class="steam-library-modal">
+        <button class="modal-close" aria-label="Close">✕</button>
+        <h3>🎮 ${this.tr.steamLibrary}</h3>
+        <p class="steam-library-subtitle">${de ? 'Importiere deine Steam Spiele fuer bessere Empfehlungen' : 'Import your Steam games for better recommendations'}</p>
+        
+        ${hasImported ? `
+          <div class="steam-library-status">
+            <div class="steam-library-count">${this.t('steamLibraryCount', gameCount.toString())}</div>
+            <div class="steam-library-lastfetch">${de ? 'Letzter Import:' : 'Last import:'} ${lastFetchDate}</div>
+          </div>
+        ` : ''}
+        
+        <div class="steam-library-form">
+          <div class="steam-library-field">
+            <label for="steam-id">${this.tr.steamId}</label>
+            <input type="text" id="steam-id" value="${escapeHTML(steamId)}" placeholder="${de ? 'Deine Steam ID (z.B. 76561198012345678)' : 'Your Steam ID (e.g. 76561198012345678)'}">
+            <a href="https://steamid.io/" target="_blank" rel="noopener" class="steam-library-help">${de ? 'Steam ID finden' : 'Find your Steam ID'}</a>
+          </div>
+          
+          <div class="steam-library-field">
+            <label for="steam-api-key">${this.tr.steamApiKey}</label>
+            <input type="password" id="steam-api-key" value="${escapeHTML(apiKey)}" placeholder="${de ? 'Steam Web API Key (optional)' : 'Steam Web API Key (optional)'}">
+            <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener" class="steam-library-help">${de ? 'API Key bekommen' : 'Get API Key'}</a>
+          </div>
+        </div>
+        
+        <div class="steam-library-actions">
+          ${hasImported ? `
+            <button class="btn btn-secondary steam-library-clear">${this.tr.clearFilter}</button>
+          ` : ''}
+          <button class="btn btn-primary steam-library-import" ${!steamId ? 'disabled' : ''}>
+            ${this.tr.steamImport}
+          </button>
+        </div>
+        
+        <div class="steam-library-info">
+          <p>${de ? 'Hinweis: Dein Profil muss oeffentlich sein, oder du brauchst einen API Key.' : 'Note: Your profile must be public, or you need an API key.'}</p>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+    
+    // Enable/disable import button based on Steam ID input
+    const steamIdInput = overlay.querySelector('#steam-id');
+    const importBtn = overlay.querySelector('.steam-library-import');
+    steamIdInput.addEventListener('input', () => {
+      importBtn.disabled = !steamIdInput.value.trim();
+    });
+    
+    // Import button
+    importBtn.addEventListener('click', async () => {
+      const id = steamIdInput.value.trim();
+      const key = overlay.querySelector('#steam-api-key').value.trim();
+      
+      if (!id) return;
+      
+      importBtn.disabled = true;
+      importBtn.textContent = this.tr.steamImporting;
+      
+      try {
+        await this._fetchSteamLibrary(id, key, overlay);
+      } catch (error) {
+        console.error('Steam Library import error:', error);
+        showToast(this.tr.steamImportError, { type: 'error', duration: 3000 });
+      } finally {
+        importBtn.disabled = false;
+        importBtn.textContent = this.tr.steamImport;
+      }
+    });
+    
+    // Clear button
+    overlay.querySelector('.steam-library-clear')?.addEventListener('click', () => {
+      this.state.steamLibrary = { steamId: '', apiKey: '', imported: false, gameCount: 0, lastFetch: 0 };
+      this.save();
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+      this.renderCards(app);
+    });
+    
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      }
+    });
+    
+    // Close button
+    overlay.querySelector('.modal-close').addEventListener('click', () => {
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+    });
+  }
+
+  async _fetchSteamLibrary(steamId, apiKey, overlay) {
+    const params = new URLSearchParams({ steamid: steamId });
+    if (apiKey) params.set('api_key', apiKey);
+    
+    const response = await fetch(`/proxy/steam/library?${params.toString()}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to fetch Steam library');
+    }
+    
+    const data = await response.json();
+    const { gameCount, games } = data;
+    
+    // Store library in state
+    this.state.steamLibrary = {
+      steamId,
+      apiKey,
+      imported: true,
+      gameCount,
+      lastFetch: Math.floor(Date.now() / 1000),
+      games: games || []
+    };
+    this.save();
+    
+    // Store in IndexedDB for persistence
+    await safeSetJSON('bs-steam-library', this.state.steamLibrary);
+    
+    showToast(this.t('steamLibraryCount', gameCount.toString()), { type: 'success', duration: 3000 });
+    
+    overlay.classList.remove('open');
+    setTimeout(() => overlay.remove(), 300);
+    this.renderCards(document.getElementById('app'));
+  }
+
+  _isInLibrary(card) {
+    if (!this.state.steamLibrary.imported || !this.state.steamLibrary.games) {
+      return false;
+    }
+    
+    // Check by Steam App ID if available
+    if (card.steamAppId) {
+      return this.state.steamLibrary.games.some(g => g.appId === card.steamAppId);
+    }
+    
+    // Fallback: check by title (case-insensitive)
+    const cardTitle = (card.title || '').toLowerCase();
+    return this.state.steamLibrary.games.some(g => 
+      (g.name || '').toLowerCase() === cardTitle
+    );
+  }
+
+  // ===== MOOD + TIME FILTER LOGIC =====
+  _applyMoodTimeFilter(items) {
+    const { mood, playtime } = this.state.moodTimeFilter;
+    if (!mood && !playtime) return items;
+
+    return items.filter(item => {
+      // Check mood filter
+      if (mood) {
+        const itemMoods = (item.moods || []).map(m => m.toLowerCase());
+        const itemTags = (item.steamTags || []).map(t => t.toLowerCase());
+        const itemGenres = (item.genres || []).map(g => {
+          const id = typeof g === 'number' ? g : g.id || g;
+          return (typeof g === 'string' ? g : (this._genreMap[id] || '')).toLowerCase();
+        });
+        const itemThemes = (item.themes || []).map(t => t.toLowerCase());
+        
+        // Mood to genre/tag mapping
+        const moodMappings = {
+          cozy: ['cozy', 'wholesome', 'relaxing', 'casual', 'farming', 'simulation', 'puzzle', 'visual novel'],
+          intense: ['intense', 'action', 'souls-like', 'difficult', 'horror', 'survival', 'competitive'],
+          chill: ['chill', 'relaxing', 'atmospheric', 'story rich', 'adventure', 'puzzle', 'indie'],
+          competitive: ['competitive', 'multiplayer', 'pvp', 'battle royale', 'fighting', 'strategy', 'sports']
+        };
+        
+        const moodKeywords = moodMappings[mood] || [];
+        const hasMoodMatch = moodKeywords.some(keyword => 
+          itemMoods.includes(keyword) || 
+          itemTags.includes(keyword) || 
+          itemGenres.includes(keyword) ||
+          itemThemes.includes(keyword)
+        );
+        
+        if (!hasMoodMatch) return false;
+      }
+      
+      // Check playtime filter
+      if (playtime && playtime !== 'any') {
+        const playtimeHours = item.playtime || 0;
+        const playtimeMinutes = playtimeHours * 60;
+        
+        const playtimeRanges = {
+          quick: { min: 0, max: 30 },
+          medium: { min: 30, max: 180 },
+          long: { min: 180, max: 999 }
+        };
+        
+        const range = playtimeRanges[playtime];
+        if (range && (playtimeMinutes < range.min || playtimeMinutes > range.max)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
   }
 
   // ===== DAYLIST (Contextual Curation Engine) =====
@@ -1768,21 +2150,6 @@ class App {
     return `<span class="metacritic-badge ${colorClass}">MC ${card.metacritic}</span>`;
   }
 
-  _renderStoreButtons(card) {
-    if (!card.steamAppId) return '';
-    return `
-      <div class="store-buttons">
-        <a href="steam://store/${card.steamAppId}" class="store-btn steam-deep" title="Open in Steam">
-          <span class="store-btn-icon">🎮</span>
-          <span class="store-btn-text">Steam</span>
-        </a>
-        <a href="https://store.steampowered.com/app/${card.steamAppId}" target="_blank" rel="noopener" class="store-btn steam-web" title="View on Steam">
-          <span class="store-btn-icon">🌐</span>
-          <span class="store-btn-text">Store</span>
-        </a>
-      </div>`;
-  }
-
   _getBlindGameHook(card) {
     const overview = (card.overview || '').toLowerCase();
     const genres = (card.genres || []).join(' ').toLowerCase();
@@ -1969,6 +2336,7 @@ class App {
   // ===== CARD MODAL WITH IMPROVED REASONING =====
   _showCardModal(card, app) {
     const isGame = card.type === 'game' || card.source === 'igdb';
+    const isBook = this.state.mediaType === 'books';
     const modal = document.createElement('div');
     modal.className = 'card-modal-overlay';
     modal.innerHTML = `
@@ -2400,28 +2768,36 @@ class App {
   }
 
   _renderStoreButtons(card) {
-    if (card.source !== 'igdb') return '';
-    const slug = card.slug || encodeURIComponent(card.title).toLowerCase().replace(/%20/g, '-');
-    const stores = [];
-    const platforms = (card.platforms || []).map(p => (p.name || '').toLowerCase());
-    const hasPC = platforms.some(p => /pc|steam|windows/.test(p));
-    const hasPS = platforms.some(p => /playstation/.test(p));
-    const hasXbox = platforms.some(p => /xbox/.test(p));
-    const hasNintendo = platforms.some(p => /nintendo|switch/.test(p));
+    if (card.source !== 'igdb' && !card.steamAppId) return '';
 
-    if (hasPC) {
-      stores.push({ name: 'Steam Web', icon: '🌐', color: '#1b2838', url: `https://store.steampowered.com/app/${card.igdb_id || ''}/${slug}` });
+    const stores = [];
+
+    if (card.steamAppId) {
+      stores.push({ name: 'Steam', icon: '🎮', color: '#1b2838', url: `https://store.steampowered.com/app/${card.steamAppId}` });
     }
-    if (hasPS) {
-      stores.push({ name: 'PlayStation Store', icon: '🎮', color: '#003087', url: `https://store.playstation.com/en-us/search/${encodeURIComponent(card.title)}` });
+
+    if (card.source === 'igdb') {
+      const slug = card.slug || encodeURIComponent(card.title).toLowerCase().replace(/%20/g, '-');
+      const platforms = (card.platforms || []).map(p => (p.name || '').toLowerCase());
+      const hasPC = platforms.some(p => /pc|steam|windows/.test(p));
+      const hasPS = platforms.some(p => /playstation/.test(p));
+      const hasXbox = platforms.some(p => /xbox/.test(p));
+      const hasNintendo = platforms.some(p => /nintendo|switch/.test(p));
+
+      if (hasPC && !card.steamAppId) {
+        stores.push({ name: 'Steam Web', icon: '🌐', color: '#1b2838', url: `https://store.steampowered.com/app/${card.igdb_id || ''}/${slug}` });
+      }
+      if (hasPS) {
+        stores.push({ name: 'PlayStation Store', icon: '🎮', color: '#003087', url: `https://store.playstation.com/en-us/search/${encodeURIComponent(card.title)}` });
+      }
+      if (hasXbox) {
+        stores.push({ name: 'Xbox Store', icon: '🟢', color: '#107c10', url: `https://www.xbox.com/en-us/games/store/a/${card.igdb_id || slug}` });
+      }
+      if (hasNintendo) {
+        stores.push({ name: 'Nintendo eShop', icon: '🔴', color: '#e60012', url: `https://www.nintendo.com/us/store/products/${slug}-switch/` });
+      }
+      stores.push({ name: 'IGDB', icon: '📋', color: '#a855f7', url: card.url || `https://www.igdb.com/games/${slug}` });
     }
-    if (hasXbox) {
-      stores.push({ name: 'Xbox Store', icon: '🟢', color: '#107c10', url: `https://www.xbox.com/en-us/games/store/a/${card.igdb_id || slug}` });
-    }
-    if (hasNintendo) {
-      stores.push({ name: 'Nintendo eShop', icon: '🔴', color: '#e60012', url: `https://www.nintendo.com/us/store/products/${slug}-switch/` });
-    }
-    stores.push({ name: 'IGDB', icon: '📋', color: '#a855f7', url: card.url || `https://www.igdb.com/games/${slug}` });
 
     if (!stores.length) return '';
     return `
@@ -2641,6 +3017,7 @@ class App {
               </div>
             `).join('')}
           </div>
+        </div>
         ${this._renderExperimentStats()}
         <div class="stat-grid">
           <div class="stat"><span class="stat-num" data-target="${total}">0</span><span class="stat-label">${this.lang === 'de' ? 'Bewertet' : 'Rated'}</span></div>
