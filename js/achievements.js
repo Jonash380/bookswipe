@@ -6,22 +6,22 @@
 const STORAGE_KEY = 'bs-achievements';
 
 const ACHIEVEMENTS = {
-  genre_explorer_5:  { id:'genre_explorer_5',  icon:'🎨', name_de:'Genre-Entdecker',     name_en:'Genre Explorer',     desc_de:'5 verschiedene Genres gemocht',   desc_en:'Liked 5 different genres',   tier:'bronze' },
-  genre_explorer_15: { id:'genre_explorer_15', icon:'🎨', name_de:'Genre-Kenner',        name_en:'Genre Connoisseur',   desc_de:'15 verschiedene Genres gemocht',  desc_en:'Liked 15 different genres',  tier:'silver' },
-  genre_explorer_30: { id:'genre_explorer_30', icon:'🎨', name_de:'Genre-Meister',       name_en:'Genre Master',        desc_de:'30 verschiedene Genres gemocht',  desc_en:'Liked 30 different genres',  tier:'gold' },
-  speed_demon:       { id:'speed_demon',       icon:'⚡', name_de:'Schnelldenker',       name_en:'Speed Demon',         desc_de:'50 Swipes in einer Sitzung',     desc_en:'50 swipes in one session',   tier:'silver' },
-  night_owl:         { id:'night_owl',         icon:'🦉', name_de:'Nachtmensch',         name_en:'Night Owl',           desc_de:'Nach Mitternacht geswiped',      desc_en:'Swiped after midnight',      tier:'bronze' },
-  century:           { id:'century',           icon:'💯', name_de:'Hunderter-Club',      name_en:'Century Club',        desc_de:'100+ Swipes insgesamt',           desc_en:'100+ total swipes',          tier:'bronze' },
-  millennium:        { id:'millennium',        icon:'🏆', name_de:'Tausender-Club',      name_en:'Millennium Club',     desc_de:'1000+ Swipes insgesamt',          desc_en:'1000+ total swipes',         tier:'gold' },
+  genre_explorer_5:  { id:'genre_explorer_5',  icon:'🎨', name_de:'Genre-Entdecker',     name_en:'Genre Explorer',     desc_de:'5 verschiedene Genres gemocht',   desc_en:'Saved 5 different genres',   tier:'bronze' },
+  genre_explorer_15: { id:'genre_explorer_15', icon:'🎨', name_de:'Genre-Kenner',        name_en:'Genre Connoisseur',   desc_de:'15 verschiedene Genres gemocht',  desc_en:'Saved 15 different genres',  tier:'silver' },
+  genre_explorer_30: { id:'genre_explorer_30', icon:'🎨', name_de:'Genre-Meister',       name_en:'Genre Master',        desc_de:'30 verschiedene Genres gemocht',  desc_en:'Saved 30 different genres',  tier:'gold' },
+  speed_demon:       { id:'speed_demon',       icon:'⚡', name_de:'Schnelldenker',       name_en:'Speed Demon',         desc_de:'50 Stoeberaktionen in einer Sitzung', desc_en:'50 browses in one session', tier:'silver' },
+  night_owl:         { id:'night_owl',         icon:'🦉', name_de:'Nachtmensch',         name_en:'Night Owl',           desc_de:'Nach Mitternacht gestoebert', desc_en:'Browsed after midnight',     tier:'bronze' },
+  century:           { id:'century',           icon:'💯', name_de:'Hunderter-Club',      name_en:'Century Club',        desc_de:'100+ Stoeberaktionen insgesamt', desc_en:'100+ total browses',       tier:'bronze' },
+  millennium:        { id:'millennium',        icon:'🏆', name_de:'Tausender-Club',      name_en:'Millennium Club',     desc_de:'1000+ Stoeberaktionen insgesamt', desc_en:'1000+ total browses',     tier:'gold' },
   globetrotter:      { id:'globetrotter',      icon:'🌍', name_de:'Weltenbummler',       name_en:'Globetrotter',        desc_de:'Medien aus 10 Ländern entdeckt',  desc_en:'Media from 10 countries',    tier:'gold' },
-  bookworm:          { id:'bookworm',          icon:'📚', name_de:'Bücherwurm',          name_en:'Bookworm',            desc_de:'20+ Bücher gemocht',              desc_en:'Liked 20+ books',            tier:'silver' },
-  cinephile:         { id:'cinephile',         icon:'🎬', name_de:'Cineast',             name_en:'Cinephile',           desc_de:'50+ Filme gemocht',               desc_en:'Liked 50+ movies',           tier:'silver' },
-  gamer:             { id:'gamer',             icon:'🎮', name_de:'Zocker',              name_en:'Gamer',               desc_de:'20+ Spiele gemocht',              desc_en:'Liked 20+ games',            tier:'silver' },
-  completionist:     { id:'completionist',     icon:'✅', name_de:'Komplettist',         name_en:'Completionist',       desc_de:'Eine ganze Reihe vervollständigt', desc_en:'Completed a franchise',      tier:'gold' },
-  blind_date_lover:  { id:'blind_date_lover',  icon:'🎭', name_de:'Blind-Date-Fan',      name_en:'Blind Date Fan',      desc_de:'20 Blind-Date-Swipes',            desc_en:'20 blind date swipes',       tier:'bronze' },
-  week_streak_3:     { id:'week_streak_3',     icon:'🔥', name_de:'Dranbleiber',         name_en:'Streak Keeper',       desc_de:'3 Wochen in Folge aktiv',          desc_en:'Active 3 weeks in a row',    tier:'bronze' },
-  week_streak_7:     { id:'week_streak_7',     icon:'🔥', name_de:'Gewohnheitstier',     name_en:'Dedicated',           desc_de:'7 Wochen in Folge aktiv',          desc_en:'Active 7 weeks in a row',    tier:'silver' },
-  wildcard_finder:   { id:'wildcard_finder',   icon:'🎲', name_de:'Wildcard-Finder',     name_en:'Wildcard Finder',     desc_de:'10 Wildcard-Überraschungen gemocht', desc_en:'Liked 10 wildcard surprises', tier:'bronze' },
+  bookworm:          { id:'bookworm',          icon:'📚', name_de:'Buecherwurm',         name_en:'Bookworm',            desc_de:'20+ Buecher gespeichert',   desc_en:'Saved 20+ books',            tier:'silver' },
+  cinephile:         { id:'cinephile',         icon:'🎬', name_de:'Cineast',             name_en:'Cinephile',           desc_de:'50+ Filme gespeichert',     desc_en:'Saved 50+ movies',           tier:'silver' },
+  gamer:             { id:'gamer',             icon:'🎮', name_de:'Zocker',              name_en:'Gamer',               desc_de:'20+ Spiele gespeichert',    desc_en:'Saved 20+ games',            tier:'silver' },
+  completionist:     { id:'completionist',     icon:'✅', name_de:'Komplettist',         name_en:'Completionist',       desc_de:'Eine ganze Reihe vervollstaendigt', desc_en:'Completed a franchise', tier:'gold' },
+  mystery_pick_fan:  { id:'mystery_pick_fan',  icon:'🎭', name_de:'Geheimtipp-Fan',      name_en:'Mystery Pick Fan',    desc_de:'20 Geheimtipp-Stoeberaktionen', desc_en:'20 mystery pick browses', tier:'bronze' },
+  week_streak_3:     { id:'week_streak_3',     icon:'📖', name_de:'Dranbleiber',         name_en:'Streak Keeper',       desc_de:'3 Wochen in Folge aktiv',          desc_en:'Active 3 weeks in a row',    tier:'bronze' },
+  week_streak_7:     { id:'week_streak_7',     icon:'📖', name_de:'Gewohnheitstier',     name_en:'Dedicated',           desc_de:'7 Wochen in Folge aktiv',          desc_en:'Active 7 weeks in a row',    tier:'silver' },
+  wildcard_finder:   { id:'wildcard_finder',   icon:'🎲', name_de:'Wildcard-Finder',     name_en:'Wildcard Finder',     desc_de:'10 Wildcard-Ueberraschungen gespeichert', desc_en:'Saved 10 wildcard surprises', tier:'bronze' },
 };
 
 function getData() {
@@ -76,9 +76,9 @@ export class AchievementSystem {
       meta.progress.movie_likes = (meta.progress.movie_likes || 0) + 1;
     }
 
-    // Blind date tracking
-    if (this.app.state.blindDateMode) {
-      meta.progress.blind_swipes = (meta.progress.blind_swipes || 0) + 1;
+    // Mystery pick tracking
+    if (this.app.state.mysteryPickMode) {
+      meta.progress.mystery_pick_browses = (meta.progress.mystery_pick_browses || 0) + 1;
     }
 
     // Wildcard tracking
@@ -107,7 +107,7 @@ export class AchievementSystem {
       { id:'bookworm',          cond: (meta.progress.book_likes || 0) >= 20 },
       { id:'cinephile',         cond: (meta.progress.movie_likes || 0) >= 50 },
       { id:'gamer',             cond: (meta.progress.game_likes || 0) >= 20 },
-      { id:'blind_date_lover',  cond: (meta.progress.blind_swipes || 0) >= 20 },
+      { id:'mystery_pick_fan',  cond: (meta.progress.mystery_pick_browses || 0) >= 20 },
       { id:'wildcard_finder',   cond: (meta.progress.wildcard_likes || 0) >= 10 },
       { id:'globetrotter',      cond: (meta.progress.unique_countries || []).length >= 10 },
     ];
@@ -274,8 +274,8 @@ export function renderAchievements(app, achiever) {
     <div class="ach-progress-section">
       <h3>${de ? 'Dein Fortschritt' : 'Your Progress'}</h3>
       <div class="ach-progress-grid">
-        <div class="ach-prog-item"><span class="ach-prog-val">${progress.total_swipes || 0}</span><span class="ach-prog-label">${de?'Swipes':'Swipes'}</span></div>
-        <div class="ach-prog-item"><span class="ach-prog-val">${progress.total_likes || 0}</span><span class="ach-prog-label">${de?'Likes':'Likes'}</span></div>
+        <div class="ach-prog-item"><span class="ach-prog-val">${progress.total_swipes || 0}</span><span class="ach-prog-label">${de?'Stoeberaktionen':'Browses'}</span></div>
+        <div class="ach-prog-item"><span class="ach-prog-val">${progress.total_likes || 0}</span><span class="ach-prog-label">${de?'Gespeichert':'Saved'}</span></div>
         <div class="ach-prog-item"><span class="ach-prog-val">${(progress.unique_genres || []).length}</span><span class="ach-prog-label">${de?'Genres':'Genres'}</span></div>
         <div class="ach-prog-item"><span class="ach-prog-val">${progress.week_streak || 0}</span><span class="ach-prog-label">${de?'Wochen-Streak':'Week Streak'}</span></div>
       </div>

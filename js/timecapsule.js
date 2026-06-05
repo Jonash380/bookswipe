@@ -103,7 +103,7 @@ export function renderTimeCapsule(app, profile) {
         <div class="tc-snap-date">${new Date(cap.date).toLocaleDateString(de ? 'de-DE' : 'en-US', { month:'short', day:'numeric' })}</div>
         <div class="tc-snap-info">
           <strong>${cap.label}</strong>
-          <span>${cap.totalSwipes} ${de?'Swipes':'swipes'} · ${Math.round((cap.likeRatio||0)*100)}% ${de?'Like-Rate':'like rate'}</span>
+          <span>${cap.totalSwipes} ${de?'Stoeberaktionen':'browses'} · ${Math.round((cap.likeRatio||0)*100)}% ${de?'Speicherquote':'save rate'}</span>
           <div class="tc-snap-genres">${cap.topGenres.slice(0,3).map(g => `<span class="tc-genre-tag">${g}</span>`).join('')}</div>
         </div>
       </div>`;

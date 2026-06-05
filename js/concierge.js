@@ -89,7 +89,7 @@ export class Concierge {
     if (/lustig|funny|comedy|komödie/i.test(lower)) {
       return de
         ? `Lust auf was Lustiges! 🎭 In deinem Deck findest du Comedy/Feel-Good-Titel. Probier den "Feel Good" Mood-Filter. Basierend auf deinen ${topGenres[0] || ''}-Vorlieben findest du garantiert was Passendes.`
-        : `In the mood for laughs! 🎭 Check your deck for comedy/feel-good titles. Try the "Feel Good" mood filter. Your ${topGenres[0] || ''} taste ensures a good match.`;
+        : `In the mood for laughs! 🎭 Check your deck for comedy/feel-good titles. Try the "Feel Good" mood filter. Your ${topGenres[0] || ''} taste ensures a good pick.`;
     }
 
     if (/action|spannung|thriller|adrenalin/i.test(lower)) {
@@ -101,11 +101,11 @@ export class Concierge {
     // Default response
     const defaults = de ? [
       `Basierend auf deinen ${watchlistCount} Likes und Top-Genres (${topGenres.join(', ')}), empfehle ich dir, die neuen Karten in deinem Entdecken-Deck durchzugehen. Dein Geschmack ist gut kalibriert!`,
-      `Mit deinem Profil (${topGenres.slice(0,2).join(', ')}) findest du im Discover-Bereich passende Titel. Probier den Blind-Date-Modus für Überraschungen! 🎭`,
+      `Mit deinem Profil (${topGenres.slice(0,2).join(', ')}) findest du im Discover-Bereich passende Titel. Probier den Geheimtipp-Modus fuer Ueberraschungen! 🎭`,
       `Deine ${topGenres[0] || 'Genre'}-Vorliebe ist stark! Schau dir die ähnlichen Titel in deinem Deck an. Oder starte eine Challenge für neue Entdeckungen.`,
     ] : [
       `Based on your ${watchlistCount} likes and top genres (${topGenres.join(', ')}), I recommend browsing your Discover deck. Your taste profile is well-calibrated!`,
-      `With your profile (${topGenres.slice(0,2).join(', ')}) you'll find great matches in Discover. Try Blind Date mode for surprises! 🎭`,
+      `With your profile (${topGenres.slice(0,2).join(', ')}) you'll find great picks in Discover. Try Mystery Pick mode for surprises! 🎭`,
       `Your ${topGenres[0] || 'genre'} preference is strong! Check similar titles in your deck. Or start a challenge for new discoveries.`,
     ];
     return pick(defaults);
@@ -147,7 +147,7 @@ export function renderConcierge(app, concierge) {
       <div class="concierge-greeting">
         <span class="concierge-greeting-icon">🤖</span>
         <h3>${de ? 'Dein Media-Concierge' : 'Your Media Concierge'}</h3>
-        <p>${de ? 'Beschreib wonach dir ist — ich finde das Passende.' : 'Describe what you\'re in the mood for — I\'ll find the right match.'}</p>
+        <p>${de ? 'Beschreib wonach dir ist — ich finde das Passende.' : 'Describe what you\'re in the mood for — I\'ll find the right pick.'}</p>
         <div class="concierge-suggestions">
           <button class="concierge-suggestion" data-msg="${de?'Lust auf was Lustiges':'Something funny'}">😂 ${de?'Lust auf was Lustiges':'Something funny'}</button>
           <button class="concierge-suggestion" data-msg="${de?'Was Kurzes für zwischendurch':'Something short and quick'}">⚡ ${de?'Was Kurzes':'Something short'}</button>

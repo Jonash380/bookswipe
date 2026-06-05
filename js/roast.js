@@ -127,9 +127,9 @@ export function renderRoast(app, roastLines, profile) {
 
   let html = `<div class="roast-view">`;
   html += `<div class="roast-header">`;
-  html += `<span class="roast-icon">🔥</span>`;
+  html += `<span class="roast-icon">📖</span>`;
   html += `<h2>${de ? 'Roast My Taste' : 'Roast My Taste'}</h2>`;
-  html += `<p>${de ? 'Basierend auf deinen' : 'Based on your'} ${totalSwipes} ${de ? 'Swipes' : 'swipes'}</p>`;
+  html += `<p>${de ? 'Basierend auf deinen' : 'Based on your'} ${totalSwipes} ${de ? 'Stoeberaktionen' : 'browses'}</p>`;
   html += `</div>`;
 
   html += `<div class="roast-cards">`;
@@ -144,8 +144,8 @@ export function renderRoast(app, roastLines, profile) {
   html += `
     <div class="roast-footer">
       <div class="roast-stat"><span>${topGenres.slice(0,2).join(', ') || '—'}</span><small>${de?'Top-Genres':'Top Genres'}</small></div>
-      <div class="roast-stat"><span>${Math.round((profile.likeRatio||0)*100)}%</span><small>${de?'Like-Rate':'Like Rate'}</small></div>
-      <div class="roast-stat"><span>${totalSwipes}</span><small>${de?'Swipes':'Swipes'}</small></div>
+      <div class="roast-stat"><span>${Math.round((profile.likeRatio||0)*100)}%</span><small>${de?'Speicherquote':'Save Rate'}</small></div>
+      <div class="roast-stat"><span>${totalSwipes}</span><small>${de?'Stoeberaktionen':'Browses'}</small></div>
     </div>
   `;
 

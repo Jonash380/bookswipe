@@ -1,12 +1,12 @@
 /**
- * BookSwipe Swipe Party
- * Group real-time swiping sessions via server polling.
- * Share a session link, everyone swipes the same deck, consensus pick revealed.
+ * BookSwipe Browse Party
+ * 
+ * Share a session link, everyone browses the same deck, consensus pick revealed.
  */
 
 const STORAGE_KEY = 'bs-party';
 
-export class SwipeParty {
+export class BrowseParty {
   constructor(app) {
     this.app = app;
     this.sessionId = null;
@@ -54,10 +54,10 @@ export class SwipeParty {
       return true;
   }
 
-  async submitSwipe(itemId, direction) {
+  async submitBrowse(itemId, direction) {
     if (!this.sessionId) return;
     try {
-      await fetch('/proxy/party/swipe', {
+      await fetch('/proxy/party/browse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -120,15 +120,15 @@ export class SwipeParty {
   }
 }
 
-/** Render the Swipe Party UI */
-export function renderSwipeParty(app, party) {
+/** Render the Browse Party UI */
+export function renderBrowseParty(app, party) {
   const de = app.lang === 'de';
 
   let html = `<div class="party-view">`;
   html += `<div class="party-header">`;
   html += `<span class="party-icon">🎉</span>`;
-  html += `<h2>${de ? 'Swipe Party' : 'Swipe Party'}</h2>`;
-  html += `<p>${de ? 'Gemeinsam swipen, gemeinsam entscheiden' : 'Swipe together, decide together'}</p>`;
+  html += `<h2>${de ? 'Browse Party' : 'Browse Party'}</h2>`;
+  html += `<p>${de ? 'Gemeinsam stoebern, gemeinsam entscheiden' : 'Browse together, decide together'}</p>`;
   html += `</div>`;
 
   if (party.sessionId) {
@@ -166,7 +166,7 @@ export function renderSwipeParty(app, party) {
         <div class="party-result ${i === 0 ? 'winner' : ''}">
           <span class="party-result-rank">#${i+1}</span>
           <span class="party-result-title">${r.title || id}</span>
-          <span class="party-result-votes">❤️ ${r.likes || 0} | 👎 ${r.nopes || 0}</span>
+          <span class="party-result-votes">📚 ${r.likes || 0} | ✕ ${r.nopes || 0}</span>
         </div>`;
     });
     html += `</div>`;

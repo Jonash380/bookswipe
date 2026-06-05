@@ -107,8 +107,8 @@ export class SwipeEngine {
 
       // Trigger super-like flash
       if (dir === 'up') {
-        document.body.classList.add('super-like-flash');
-        setTimeout(() => document.body.classList.remove('super-like-flash'), 350);
+        document.body.classList.add('must-read-flash');
+        setTimeout(() => document.body.classList.remove('must-read-flash'), 350);
       }
 
       setTimeout(() => {

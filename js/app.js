@@ -2,7 +2,7 @@ import { escapeHTML, shuffleArray, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON,
 import { BOOK_GENRES, BOOK_MOODS, BOOK_QUIZ, ERA_FILTERS, BOOK_SEARCH, COVER_PLACEHOLDERS } from './books.js';
 import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
-import { fetchBooks } from './api.js';
+import { fetchBooks, fetchUpcomingBooks, fetchUpcomingMedia, mapTmdbResult } from './api.js';
 import { SwipeEngine } from './swipe.js';
 import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
@@ -63,7 +63,8 @@ const LANG = {
     wrongMood:'Falscher Stimmung', notMyGenre:'Nicht mein Genre', otherReason:'Anderer Grund',
     feedbackTitle:'Warum nicht?', fromWatchlist:'Aus Merkliste',
     crossMediaTitle:'Passt auch', noDescription:'Keine Beschreibung',
-    search:'Suchen', searchPlaceholder:'Titel oder Autor...', searchNoResults:'Nichts zu "{0}"'
+    search:'Suchen', searchPlaceholder:'Titel oder Autor...', searchNoResults:'Nichts zu "{0}"',
+    releaseRadar:'Erscheinungsradar', upcoming:'Demnaechst', justReleased:'Erschienen', radarDays:'Zeitraum'
   },
   en: {
     title:'BookSwipe', subtitle:'Books, movies & games', skip:'Skip', like:'Love it',
@@ -103,7 +104,8 @@ const LANG = {
     wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other',
     feedbackTitle:'Why not?', fromWatchlist:'From watchlist',
     crossMediaTitle:'You\'ll also like', noDescription:'No description',
-    search:'Search', searchPlaceholder:'Title or author...', searchNoResults:'Nothing for "{0}"'
+    search:'Search', searchPlaceholder:'Title or author...', searchNoResults:'Nothing for "{0}"',
+    releaseRadar:'Release Radar', upcoming:'Upcoming', justReleased:'Just Released', radarDays:'Time Range'
   }
 };
 
@@ -169,7 +171,7 @@ class App {
       eraFilter: 'all', activeAesthetic: null, activeMood: null,
       pacingFilter: false, throwbackActive: false, selectedEras: [],
       hasCompletedOnboarding: false, hasCompletedQuiz: false,
-      watchMode: 'solo', onboardingStep: 0, blindDateMode: false,
+      watchMode: 'solo', onboardingStep: 0, blindDateMode: false, releaseRadarMode: false, radarDays: 60,
       wildcardFrequency: 50,
       blockedGenres: [], boostedMoods: [], selectedPlatforms: [],
       moodTimeFilter: { active: false, mood: null, playtime: null },
@@ -250,6 +252,8 @@ class App {
     if (state) {
       this.state = { ...this.state, ...state };
     }
+    // Migration: ensure new state fields have defaults
+    if (!this.state.radarDays) this.state.radarDays = 60;
     this.tr = LANG[this.lang] || LANG.de;
     this._genreMap = getTMDBGenreMap(this.lang);
     // URL params override localStorage state for shareable links
@@ -810,7 +814,11 @@ class App {
     try {
       let items;
       if (this.state.mediaType === 'books') {
-        items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang, signal);
+        if (this.state.releaseRadarMode) {
+          items = await fetchUpcomingBooks(this.state.selectedGenres, this.lang, signal, this.state.radarDays);
+        } else {
+          items = await fetchBooks(this.state.selectedGenres, this.state.selectedMoods, this.lang, signal);
+        }
       } else if (this.state.mediaType === 'games') {
         items = await fetchGamesForDiscovery(
           this.state.selectedGenres || [],
@@ -819,7 +827,11 @@ class App {
         );
         items = await enrichGamesWithSteam(items);
       } else {
-        items = await this.fetchMedia(signal);
+        if (this.state.releaseRadarMode) {
+          items = await this.fetchUpcomingMedia(signal);
+        } else {
+          items = await this.fetchMedia(signal);
+        }
       }
 
       if (signal.aborted) return;
@@ -917,6 +929,31 @@ class App {
   }
 
   _renderEmptyState(app) {
+    const de = this.lang === 'de';
+    // Release Radar-specific empty state
+    if (this.state.releaseRadarMode) {
+      const radarMsgs = {
+        books: { h: de ? 'Keine neuen Buecher' : 'No upcoming books', p: de ? 'Fuer deine Genres gibt es gerade keine neuen Buecher. Probiere andere Genres!' : 'No new books for your genres right now. Try other genres!' },
+        movies: { h: de ? 'Keine neuen Filme' : 'No upcoming movies', p: de ? 'Fuer deine Genres gibt es gerade keine neuen Filme. Probiere andere Genres!' : 'No upcoming movies for your genres right now. Try other genres!' },
+        tv: { h: de ? 'Keine neuen Serien' : 'No upcoming shows', p: de ? 'Fuer deine Genres gibt es gerade keine neuen Serien. Probiere andere Genres!' : 'No upcoming shows for your genres right now. Try other genres!' },
+      };
+      const radarMsg = radarMsgs[this.state.mediaType] || radarMsgs.movies;
+      app.innerHTML = `
+        <div class="empty-state">
+          <span class="empty-state-icon">📅</span>
+          <h2>${this._wrapHeroText(radarMsg.h, 'big accent')}</h2>
+          <p>${radarMsg.p}</p>
+          <button class="btn btn-primary" data-action="toggle-radar">${de ? 'Normal stoebern' : 'Browse normally'}</button>
+          ${this._navHTML('discover')}
+        </div>`;
+      app.querySelector('[data-action="toggle-radar"]')?.addEventListener('click', () => {
+        this.state.releaseRadarMode = false;
+        this.save();
+        this.renderDiscover(document.getElementById('app'));
+      });
+      this._bindNav(app);
+      return;
+    }
     if (this.history.length === 0) {
       const icon = this.state.mediaType === 'books' ? '📖' : this.state.mediaType === 'games' ? '🎮' : '🎬';
       app.innerHTML = `
@@ -956,18 +993,15 @@ class App {
       const r = await fetch(`/proxy/tmdb/discover/${type}?sort_by=popularity.desc&with_genres=${genreIds || ''}&language=${this.lang}`, { signal });
       if (!r.ok) return [];
       const data = await r.json();
-      return (data.results || []).map(m => ({
-        id: `tmdb-${m.id}`, tmdb_id: m.id, title: m.title || m.name,
-        cover: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : '',
-        backdrop: m.backdrop_path ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` : '',
-        year: parseInt((m.release_date || m.first_air_date || '').slice(0, 4)) || null,
-        overview: m.overview, genres: m.genre_ids, source: 'tmdb', type,
-        rating: m.vote_average, vote_count: m.vote_count
-      }));
+      return (data.results || []).map(m => mapTmdbResult(m, type));
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       console.warn('fetchMedia error', e); return [];
     }
+  }
+
+  async fetchUpcomingMedia(signal) {
+    return fetchUpcomingMedia(this.state.mediaType, this.state.selectedGenres, this.lang, this.state.radarDays, signal);
   }
 
   // ===== GENRE/MOOD FILTER CHIPS =====
@@ -1086,6 +1120,15 @@ class App {
           <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
           </button>
+          <button class="release-radar-toggle ${this.state.releaseRadarMode ? 'active' : ''}" data-toggle="release-radar" aria-label="${this.tr.releaseRadar}">
+            📅 ${this.tr.releaseRadar}
+          </button>
+          ${this.state.releaseRadarMode ? `
+            <div class="radar-days-row">
+              <span class="radar-days-label">${this.tr.radarDays}:</span>
+              ${[30, 60, 90].map(d => `<button class="radar-days-chip ${(this.state.radarDays || 60) === d ? 'active' : ''}" data-days="${d}">${d}d</button>`).join('')}
+            </div>
+          ` : ''}
           ${isGame ? `
             <button class="mood-time-toggle ${this.state.moodTimeFilter.active ? 'active' : ''}" data-toggle="mood-time" aria-label="${this.tr.moodTime}">
               🎯 ${this.tr.moodTime}
@@ -1119,6 +1162,7 @@ class App {
               <div class="card-cover placeholder" ${card.backdrop || card.cover ? 'style="display:none"' : ''}>${isGame ? '🎮' : isBook ? '📚' : '🎬'}</div>
               <div class="card-hero-overlay"></div>
               ${card._score != null ? `<span class="card-match-badge">${Math.round(card._score * 100)}%</span>` : ''}
+              ${card.isUpcoming ? `<span class="upcoming-badge is-upcoming">${this.tr.upcoming}</span>` : card.releaseDate ? `<span class="upcoming-badge just-released">${this.tr.justReleased}</span>` : ''}
             </div>
             <div class="card-side">
               <div class="card-side-info">
@@ -1207,6 +1251,21 @@ class App {
       this.state.blindDateMode = !this.state.blindDateMode;
       this.save();
       this.renderCards(app);
+    });
+    app.querySelector('.release-radar-toggle')?.addEventListener('click', () => {
+      this.state.releaseRadarMode = !this.state.releaseRadarMode;
+      this.save();
+      this.renderDiscover(document.getElementById('app'));
+    });
+    app.querySelectorAll('.radar-days-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const days = parseInt(chip.dataset.days, 10);
+        if (!isNaN(days) && days !== this.state.radarDays) {
+          this.state.radarDays = days;
+          this.save();
+          this.renderDiscover(document.getElementById('app'));
+        }
+      });
     });
     app.querySelector('.mood-time-toggle')?.addEventListener('click', () => {
       this._showMoodTimeModal(app);

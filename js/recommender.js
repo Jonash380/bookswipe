@@ -5,7 +5,7 @@ import { GAME_GENRE_NAME_MAP } from './games.js';
 const W = { genre:15, mood:20, era:-30, trope:10, pacing:8, aesthetic:7, warning:-5, boost:8, block:-40, decay:0.95,
   platform:25, playtime:12, mechanic:10, multiplayer:8, theme:10 };
 
-// Bayesian prior — prevents overfitting when user has few swipes
+// Bayesian prior — prevents overfitting when user has few browses
 const BAYES = { priorMean: 50, priorStrength: 5, minSamples: 3 };
 
 export class Recommender {
@@ -755,7 +755,7 @@ export class Recommender {
     if (hardNo) {
       hook = de
         ? 'Dieser Titel enthält blockierte Inhalte — vielleicht besser weiterwischen'
-        : 'This title contains blocked content — maybe swipe past';
+        : 'This title contains blocked content — maybe skip it';
     } else {
       const bestCategory = breakdown.reduce((a, b) => a.score >= b.score ? a : b);
       if (bestCategory.score >= 80) {
@@ -944,8 +944,8 @@ export class Recommender {
 
     // ---- Build the reason and health check ----
     const actionNames = {
-      like: de ? 'Rechtswisch' : 'Right Swipe',
-      nope: isLongPressReject ? (de ? 'Langdruck-Ablehnung' : 'Long-Press Reject') : (de ? 'Linkswisch' : 'Left Swipe'),
+      like: de ? 'Rechts = Gespeichert' : 'Right = Saved',
+      nope: isLongPressReject ? (de ? 'Langdruck-Ablehnung' : 'Long-Press Reject') : (de ? 'Links = Uebersprungen' : 'Left = Skipped'),
     };
 
     const actionAnalyzed = actionNames[action] || action;
@@ -1003,7 +1003,7 @@ export class Recommender {
     } else {
       profileHealthCheck = de
         ? 'Profil lernt weiter — jeder Wisch verfeinert deine Empfehlungen'
-        : 'Profile keeps learning — every swipe refines your recommendations';
+        : 'Profile keeps learning — every browse refines your recommendations';
     }
 
     return {

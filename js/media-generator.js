@@ -157,7 +157,7 @@ export function renderMediaGenerator(app, generated) {
   } else {
     html += `
       <div class="generator-empty">
-        <p>${de ? 'Bereit für eine Überraschung? Generiere einen erfundenen Titel, der perfekt zu deinem Geschmack passt.' : 'Ready for a surprise? Generate an invented title that perfectly matches your taste.'}</p>
+        <p>${de ? 'Bereit fuer eine Ueberraschung? Generiere einen erfundenen Titel, der perfekt zu deinem Geschmack passt.' : 'Ready for a surprise? Generate an invented title that perfectly fits your taste.'}</p>
       </div>`;
   }
 

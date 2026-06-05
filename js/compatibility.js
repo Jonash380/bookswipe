@@ -1,5 +1,5 @@
 /**
- * BookSwipe Taste Compatibility — "Media Soulmate"
+ * BookSwipe Taste Compatibility — "Taste Match"
  * Compare two taste DNA profiles and compute a compatibility score.
  */
 
@@ -84,7 +84,7 @@ export function renderCompatibility(app, compatibility, profile1, profile2, shar
 
   const { overall, dimensions, only1, only2 } = compatibility;
   let emoji, label;
-  if (overall >= 80) { emoji = '💞'; label = de ? 'Seelenverwandte' : 'Soulmates'; }
+  if (overall >= 80) { emoji = '📚'; label = de ? 'Geschmacksverwandte' : 'Taste Twins'; }
   else if (overall >= 60) { emoji = '🤝'; label = de ? 'Gute Übereinstimmung' : 'Great Match'; }
   else if (overall >= 40) { emoji = '👋'; label = de ? 'Interessante Mischung' : 'Interesting Mix'; }
   else { emoji = '🤷'; label = de ? 'Gegensätze' : 'Opposites'; }
@@ -93,7 +93,7 @@ export function renderCompatibility(app, compatibility, profile1, profile2, shar
   html += `<div class="compat-header">`;
   html += `<div class="compat-score-ring"><span class="compat-emoji">${emoji}</span><span class="compat-pct">${overall}%</span></div>`;
   html += `<h2>${label}</h2>`;
-  html += `<p>${de ? 'Euer Media-Soulmate-Score' : 'Your Media Soulmate Score'}</p>`;
+  html += `<p>${de ? 'Euer Geschmacks-Score' : 'Your Taste Match Score'}</p>`;
   html += `</div>`;
 
   // Dimensions
