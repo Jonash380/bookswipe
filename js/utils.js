@@ -26,3 +26,32 @@ export function trimLocalStorage(){
 export const debounce=(fn,ms=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}};
 export const shuffleArray=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 export const clamp=(v,mn,mx)=>Math.max(mn,Math.min(mx,v));
+
+// ===== GENRE ICON MAP =====
+const GENRE_ICONS_DE = {
+  28:'💥',12:'🗺️',16:'🎨',35:'😂',80:'🔍',99:'📹',18:'🎭',10751:'👨‍👩‍👧‍👦',
+  14:'🧙',36:'📜',27:'👻',10402:'🎵',9648:'🔎',10749:'💕',878:'🚀',
+  10770:'📺',53:'🔪',10752:'⚔️',37:'🤠',
+  10759:'💥🗺️',10762:'🧸',10763:'📰',10764:'📺',10765:'🚀🧙',
+  10766:'🎭',10767:'🎤',10768:'⚔️'
+};
+const GENRE_ICONS_EN = GENRE_ICONS_DE;
+const BOOK_GENRE_ICONS = {fantasy:'🧙',scifi:'🚀',thriller:'🔪',romance:'💕',horror:'👻',mystery:'🔎',adventure:'🗺️',historical:'📜',ya:'🌟',nonfiction:'📖',poetry:'📝',graphic:'🎨'};
+const GAME_GENRE_ICONS = {Action:'💥',RPG:'⚔️',Adventure:'🗺️',Puzzle:'🧩',Strategy:'🧠',Horror:'👻',Racing:'🏎️',Sports:'⚽',Simulation:'🏗️',Sandbox:'🌍',Survival:'🏕️',Platformer:'🐾',Stealth:'🥷',Fighting:'🥊',Shooter:'🔫',Music:'🎵',Educational:'📚',Indie:'🎮',MMO:'🌐',BattleRoyale:'👑',Metroidvania:'🦇',Roguelike:'🎲',Soulslike:'💀',TowerDefense:'🏰'};
+
+export function getGenreIcon(genreId, mediaType = 'movies', lang = 'de') {
+  if (typeof genreId === 'string') {
+    const lower = genreId.toLowerCase();
+    if (mediaType === 'books') return BOOK_GENRE_ICONS[lower] || '📚';
+    if (mediaType === 'games') return GAME_GENRE_ICONS[genreId] || '🎮';
+    return '🏷️';
+  }
+  const map = lang === 'en' ? GENRE_ICONS_EN : GENRE_ICONS_DE;
+  return map[genreId] || '🏷️';
+}
+
+// ===== IMAGE FALLBACK HELPER =====
+export function createImageWithFallback(src, alt, className = '', fallbackEmoji = '🎬') {
+  if (!src) return `<div class="${className} placeholder">${fallbackEmoji}</div>`;
+  return `<img class="${className}" src="${escapeHTML(src)}" alt="${escapeHTML(alt)}" loading="lazy" onerror="this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="${className} placeholder" style="display:none">${fallbackEmoji}</div>`;
+}

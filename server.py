@@ -188,7 +188,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/trakt/'):   return self._trakt(p[13:])
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
-        if p.startswith('/proxy/party/'):   return self._party_get(p[13:])
+        if p.startswith('/proxy/steam/'):   return self._steam(p[13:])
         super().do_GET()
 
     def do_POST(self):
@@ -409,7 +409,119 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log.warning('AI concierge error: %s', e)
             return self._json({'response': '', 'fallback': True})
 
-    # ---- End AI Concierge ----
+    # ---- Steam Store API proxy ----
+    def _steam(self, path):
+        """Steam Store API proxy: appdetails, featured, reviews, search"""
+        if not _OK_STEAM.match(path.split('?')[0]):
+            return self._json({'error': 'Invalid Steam path', 'status': 400}, 400)
+        qs = path.split('?', 1)[1] if '?' in path else ''
+        params = urllib.parse.parse_qs(qs)
+        cc = params.get('cc', [STEAM_CC])[0]
+
+        if path.startswith('appdetails'):
+            return self._steam_appdetails(params, cc)
+        if path.startswith('featured'):
+            return self._steam_featured(cc)
+        if path.startswith('reviews'):
+            return self._steam_reviews(params)
+        if path.startswith('search'):
+            return self._steam_search(params, cc)
+        return self._json({'error': 'Unknown Steam endpoint', 'status': 404}, 404)
+
+    def _steam_appdetails(self, params, cc):
+        appids = params.get('appids', [''])[0]
+        if not appids:
+            return self._json({'error': 'Missing appids parameter', 'status': 400}, 400)
+        # Support comma-separated appids (max 5)
+        appid_list = [a.strip() for a in appids.split(',') if a.strip()][:5]
+        cache_key = f'steam:appdetails:{",".join(appid_list)}:{cc}'
+        cached = _cache.get(cache_key, 3600)
+        if cached is not None:
+            return self._json(cached)
+        results = {}
+        for aid in appid_list:
+            url = f'{STEAM_STORE_BASE}/appdetails?appids={aid}&cc={cc}'
+            data = self._fetch_steam(url)
+            if data and str(aid) in data and data[str(aid)].get('success'):
+                results[aid] = data[str(aid)]['data']
+            else:
+                results[aid] = None
+        _cache.set(cache_key, results)
+        return self._json(results)
+
+    def _steam_featured(self, cc):
+        cache_key = f'steam:featured:{cc}'
+        cached = _cache.get(cache_key, 3600)
+        if cached is not None:
+            return self._json(cached)
+        url = f'{STEAM_STORE_BASE}/featured?cc={cc}'
+        data = self._fetch_steam(url)
+        if data:
+            _cache.set(cache_key, data)
+        return self._json(data or {})
+
+    def _steam_reviews(self, params):
+        appid = params.get('appid', [''])[0]
+        if not appid:
+            return self._json({'error': 'Missing appid', 'status': 400}, 400)
+        cache_key = f'steam:reviews:{appid}'
+        cached = _cache.get(cache_key, 3600)
+        if cached is not None:
+            return self._json(cached)
+        url = f'https://store.steampowered.com/appreviews/{appid}?json=1&language=all&purchase_type=all'
+        data = self._fetch_steam(url)
+        if data:
+            _cache.set(cache_key, data)
+        return self._json(data or {})
+
+    def _steam_search(self, params, cc):
+        """Steam search results (JSON) - for topsellers, new releases, etc."""
+        term = params.get('term', [''])[0]
+        tags = params.get('tags', [''])[0]
+        sort_by = params.get('sort_by', ['Reviews_DESC'])[0]
+        category1 = params.get('category1', ['998'])[0]  # 998 = all games
+        force_infinite = params.get('force_infinite', ['1'])[0]
+        cache_key = f'steam:search:{term}:{tags}:{sort_by}:{category1}:{cc}'
+        cached = _cache.get(cache_key, 1800)
+        if cached is not None:
+            return self._json(cached)
+        # Build search URL
+        search_qs = {
+            'cc': cc,
+            'l': 'english',
+            'sort_by': sort_by,
+            'category1': category1,
+            'force_infinite': force_infinite,
+            'snr': '1_7_7_2300_7',
+            'infinite': 1,
+        }
+        if term:
+            search_qs['term'] = term
+        if tags:
+            search_qs['tags'] = tags
+        url = f'https://store.steampowered.com/search/results/?{urllib.parse.urlencode(search_qs)}'
+        data = self._fetch_steam(url)
+        if data:
+            _cache.set(cache_key, data)
+        return self._json(data or {})
+
+    def _fetch_steam(self, url):
+        """Fetch from Steam Store with proper headers to avoid bot detection."""
+        try:
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            req.add_header('Accept', 'application/json')
+            req.add_header('Accept-Language', 'en-US,en;q=0.9')
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            log.warning('Steam HTTP %d for %s', e.code, url[:80])
+            return None
+        except Exception as e:
+            log.warning('Steam fetch error: %s', e)
+            return None
+
+    # ---- End Steam Store API proxy ----
 
     def _do_igdb_request(self, body, token):
         cache_key = f'igdb:{body}'

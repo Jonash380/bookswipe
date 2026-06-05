@@ -22,7 +22,8 @@ export class Recommender {
       genreWeights: {}, tagWeights: {}, eraPreference: null,
       tropes: {}, pacingStyles: {}, aesthetics: {}, warnings: {},
       totalSwipes: 0, likeRatio: 0,
-      gamePlatformWeights: {}, gameMechanicWeights: {}, gameThemeWeights: {}
+      gamePlatformWeights: {}, gameMechanicWeights: {}, gameThemeWeights: {},
+      steamTagWeights: {}
     });
   }
 
@@ -145,6 +146,29 @@ export class Recommender {
       score += themeOverlap.length * W.theme;
     }
 
+    if (item.steamTags && item.steamTags.length) {
+      const tagOverlap = item.steamTags.filter(t => {
+        const tagName = typeof t === 'string' ? t : t.name;
+        return this.profile.steamTagWeights && this.profile.steamTagWeights[tagName];
+      });
+      score += tagOverlap.length * 12;
+    }
+
+    if (item.reviewScore !== null && item.reviewScore !== undefined) {
+      if (item.reviewScore >= 90) score += 8;
+      else if (item.reviewScore >= 75) score += 4;
+      else if (item.reviewScore >= 50) score += 0;
+      else score -= 3;
+    }
+
+    if (item.metacritic) {
+      if (item.metacritic >= 85) score += 5;
+      else if (item.metacritic >= 70) score += 2;
+      else if (item.metacritic < 50) score -= 3;
+    }
+
+    if (item.isFree) score += 2;
+
     const dna = item.mediaDNA || {};
     if (dna.tropes) {
       const tropeOverlap = dna.tropes.filter(t => this.profile.tropes[t]);
@@ -212,6 +236,13 @@ export class Recommender {
           this.profile.gameThemeWeights[t] = (this.profile.gameThemeWeights[t] || 0) + delta;
         });
       }
+      if (item.steamTags) {
+        item.steamTags.forEach(t => {
+          const tagName = typeof t === 'string' ? t : t.name;
+          if (!this.profile.steamTagWeights) this.profile.steamTagWeights = {};
+          this.profile.steamTagWeights[tagName] = (this.profile.steamTagWeights[tagName] || 0) + delta;
+        });
+      }
     } else {
       const gm = (this.app && this.app._genreMap) || TMDB_GENRE_MAP;
       if (item.genres) {
@@ -247,6 +278,7 @@ export class Recommender {
     if (this.profile.gamePlatformWeights) Object.keys(this.profile.gamePlatformWeights).forEach(k => { this.profile.gamePlatformWeights[k] *= decay; });
     if (this.profile.gameMechanicWeights) Object.keys(this.profile.gameMechanicWeights).forEach(k => { this.profile.gameMechanicWeights[k] *= decay; });
     if (this.profile.gameThemeWeights) Object.keys(this.profile.gameThemeWeights).forEach(k => { this.profile.gameThemeWeights[k] *= decay; });
+    if (this.profile.steamTagWeights) Object.keys(this.profile.steamTagWeights).forEach(k => { this.profile.steamTagWeights[k] *= decay; });
   }
 
   /**

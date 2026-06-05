@@ -1,4 +1,4 @@
-import { escapeHTML, shuffleArray, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON, safeSetJSON } from './utils.js';
+import { escapeHTML, shuffleArray, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON, safeSetJSON, getGenreIcon, createImageWithFallback } from './utils.js';
 import { BOOK_GENRES, BOOK_MOODS, BOOK_QUIZ, ERA_FILTERS, BOOK_SEARCH, COVER_PLACEHOLDERS } from './books.js';
 import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
@@ -26,70 +26,68 @@ import { ABTest } from './experiment.js';
 // ===== CONSTANTS =====
 const LANG = {
   de: {
-    title:'BookSwipe', subtitle:'Buecher, Filme & Spiele entdecken', skip:'Ueberspringen', like:'Gefaellt mir',
-    nope:'Nichts fuer mich', discover:'Entdecken', onboarding:'Willkommen!', quiz:'Quiz', swipe:'Wischen',
-    history:'Verlauf', watchlist:'Merkliste', stats:'Statistiken', empty:'Nichts gefunden', loading:'Laden...',
-    age:'Alter', lang:'Sprache', dark:'Dunkel', light:'Hell', yes:'Ja', no:'Nein', export:'Exportieren',
+    title:'BookSwipe', subtitle:'Buecher, Filme & Spiele', skip:'Skip', like:'Gefaellt mir',
+    nope:'Nix fuer mich', discover:'Entdecken', onboarding:'Willkommen!', quiz:'Quiz', swipe:'Wischen',
+    history:'Verlauf', watchlist:'Merkliste', stats:'Stats', empty:'Nichts gefunden', loading:'Laden...',
+    age:'Alter', lang:'Sprache', dark:'Dunkel', light:'Hell', yes:'Ja', no:'Nein', export:'Export',
     share:'Teilen', whoWatching:'Wer schaut zu?', solo:'Allein', dateNight:'Date Night', family:'Familie',
-    blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Damit wir dir besser empfehlen koennen',
-    familySub:'Wir filtern Inhalte automatisch', dateNightSub:'Wir boosten Romance & Thriller',
-    soloSub:'Volle Kontrolle ueber deine Empfehlungen',
-    persona:'Dein Taste-Persona', antiTaste:'Was du hasst', antiTasteSub:'Wir haben es aus deinem Weg geraeumt',
-    weeklyVibe:'Dein Wochen-Vibe', pickForUs:'Ueberrasch mich!', dnaLink:'Taste DNA teilen',
-    playOn:'Auf {0} ansehen', whySeeing:'Warum sehe ich das?', matchReason:'Passt zu deinen Vorlieben',
-    swipeLeft:'Links geswiped', swipeRight:'Rechts geswiped', bannedContent:'Verbannt',
-    rapidFireTitle:'Dein Geschmack in 15 Sekunden', rapidFireSub:'Wische schnell durch — links = Nein, rechts = Ja',
-    rapidFireComplete:'Perfekt! Wir kennen deinen Geschmack', letterboxd:'Letterboxd Export',
-    letterboxdSub:'Importiere deine Merkliste nach Letterboxd',
-    couchCoop:'Couch Co-op Roulette', couchCoopSub:'Fuer wenn ihr euch nicht einigen koennt',
-    spin:'Drehen!', result:'Das wird es!',
-    games:'Spiele', whatToPlay:'Was soll ich spielen?', platforms:'Plattformen',
+    blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Fuer bessere Empfehlungen',
+    familySub:'Horror und Crime raus automatisch', dateNightSub:'Romance & Thriller hoch',
+    soloSub:'Du hast die Kontrolle',
+    persona:'Dein Geschmack', antiTaste:'Was du hasst', antiTasteSub:'Aus deinem Feed verbannt',
+    weeklyVibe:'Wochen-Vibe', pickForUs:'Ueberrasch mich!', dnaLink:'DNA teilen',
+    playOn:'Jetzt auf {0}', whySeeing:'Warum das?', matchReason:'Passt zu dir',
+    swipeLeft:'Links', swipeRight:'Rechts', bannedContent:'Verbannt',
+    rapidFireTitle:'15 Sekunden, los', rapidFireSub:'Links = Nein. Rechts = Ja. Go.',
+    rapidFireComplete:'Done! Wir kennen dich', letterboxd:'Letterboxd Export',
+    letterboxdSub:'Merkliste als CSV exportieren',
+    couchCoop:'Couch Roulette', couchCoopSub:'Wenn ihr euch nicht einigen koennt',
+    spin:'Los!', result:'Das wird\'s!',
+    games:'Spiele', whatToPlay:'Was wird gespielt?', platforms:'Plattformen',
     playstyle:'Spielstil', timeAvailable:'Zeit', sessions:'Sitzungen',
     quickSession:'Kurz (15-30 Min)', moderateSession:'Mittel (1-2 Std)', longSession:'Lang (3+ Std)',
     playing:'Gerade gespielt', completed:'Geschafft', backlog:'Backlog', wishlist:'Wunschliste', dropped:'Abgebrochen',
     hoursPlayed:'Std. gespielt', onSale:'Im Angebot', friendsPlaying:'Freunde spielen',
-    // New translations
-    errorLoading:'Fehler beim Laden', retry:'Erneut versuchen', errorDetails:'Details',
-    cardCount:'{0} Karten', undo:'Rueckgaengig', undoMessage:'{0} wurde entfernt',
+    errorLoading:'Fehler beim Laden', retry:'Erneut', errorDetails:'Details',
+    cardCount:'{0} Karten', undo:'Rueckgaengig', undoMessage:'{0} entfernt',
     becauseYouLiked:'Weil dir "{0}" gefaellt', swipeActionLike:'Geswiped', swipeActionNope:'Uebersprungen',
-    swipeActionSkip:'Uebergangen', notForMe:'Nicht fuer mich', seenIt:'Bereits gesehen',
+    swipeActionSkip:'Uebergangen', notForMe:'Nix fuer mich', seenIt:'Bereits gesehen',
     wrongMood:'Falscher Stimmung', notMyGenre:'Nicht mein Genre', otherReason:'Anderer Grund',
-    feedbackTitle:'Warum interessiert dich das nicht?', fromWatchlist:'Aus Merkliste entfernt',
-    crossMediaTitle:'Auch fuer dich', noDescription:'Keine Beschreibung verfuegbar',
-    search:'Suchen', searchPlaceholder:'Titel oder Autor suchen...', searchNoResults:'Keine Ergebnisse fuer "{0}"'
+    feedbackTitle:'Warum nicht?', fromWatchlist:'Aus Merkliste',
+    crossMediaTitle:'Passt auch', noDescription:'Keine Beschreibung',
+    search:'Suchen', searchPlaceholder:'Titel oder Autor...', searchNoResults:'Nichts zu "{0}"'
   },
   en: {
-    title:'BookSwipe', subtitle:'Discover books, movies & games', skip:'Skip', like:'Like',
+    title:'BookSwipe', subtitle:'Books, movies & games', skip:'Skip', like:'Love it',
     nope:'Nope', discover:'Discover', onboarding:'Welcome!', quiz:'Quiz', swipe:'Swipe',
     history:'History', watchlist:'Watchlist', stats:'Stats', empty:'Nothing found', loading:'Loading...',
     age:'Age', lang:'Language', dark:'Dark', light:'Light', yes:'Yes', no:'No', export:'Export',
     share:'Share', whoWatching:'Who\'s watching?', solo:'Solo', dateNight:'Date Night', family:'Family',
-    blindDate:'Blind Date', rapidFire:'Rapid Fire', whoWatchingSub:'So we can recommend better',
-    familySub:'We auto-filter mature content', dateNightSub:'We boost Romance & Thriller',
-    soloSub:'Full control over your picks',
-    persona:'Your Taste Persona', antiTaste:'What you hate', antiTasteSub:'We banished it from your feed',
-    weeklyVibe:'Your Weekly Vibe', pickForUs:'Pick for Us!', dnaLink:'Share Taste DNA',
-    playOn:'Play on {0}', whySeeing:'Why am I seeing this?', matchReason:'Matches your preferences',
-    swipeLeft:'Swiped left', swipeRight:'Swiped right', bannedContent:'Banished',
-    rapidFireTitle:'Your Taste in 15 Seconds', rapidFireSub:'Swipe fast — left = no, right = yes',
-    rapidFireComplete:'Perfect! We know your taste', letterboxd:'Letterboxd Export',
-    letterboxdSub:'Import your watchlist to Letterboxd',
-    couchCoop:'Couch Co-op Roulette', couchCoopSub:'For when you can\'t decide',
-    spin:'Spin!', result:'It is!',
-    games:'Games', whatToPlay:'What should I play?', platforms:'Platforms',
+    blindDate:'Blind Date', rapidFire:'Rapid Fire', whoWatchingSub:'For better picks',
+    familySub:'Horror and crime filtered out', dateNightSub:'Romance & Thriller up',
+    soloSub:'You\'re in control',
+    persona:'Your Taste', antiTaste:'What you hate', antiTasteSub:'Banned from your feed',
+    weeklyVibe:'Weekly Vibe', pickForUs:'Pick for Us!', dnaLink:'Share DNA',
+    playOn:'▶ {0}', whySeeing:'Why this?', matchReason:'Matches you',
+    swipeLeft:'Left', swipeRight:'Right', bannedContent:'Banished',
+    rapidFireTitle:'15 seconds. Go.', rapidFireSub:'Left = no. Right = yes. Fast.',
+    rapidFireComplete:'Done. We know you.', letterboxd:'Letterboxd Export',
+    letterboxdSub:'Export watchlist as CSV',
+    couchCoop:'Couch Roulette', couchCoopSub:'Can\'t decide? Try this.',
+    spin:'Spin!', result:'This one!',
+    games:'Games', whatToPlay:'What to play?', platforms:'Platforms',
     playstyle:'Playstyle', timeAvailable:'Time', sessions:'Sessions',
-    quickSession:'Quick (15-30 min)', moderateSession:'Moderate (1-2 hrs)', longSession:'Long (3+ hrs)',
-    playing:'Currently Playing', completed:'Completed', backlog:'Backlog', wishlist:'Wishlist', dropped:'Dropped',
+    quickSession:'Quick (15-30 min)', moderateSession:'Medium (1-2 hrs)', longSession:'Long (3+ hrs)',
+    playing:'Playing', completed:'Done', backlog:'Backlog', wishlist:'Wishlist', dropped:'Dropped',
     hoursPlayed:'hrs played', onSale:'On Sale', friendsPlaying:'Friends playing',
-    // New translations
-    errorLoading:'Error loading content', retry:'Try again', errorDetails:'Details',
+    errorLoading:'Load failed', retry:'Retry', errorDetails:'Details',
     cardCount:'{0} cards', undo:'Undo', undoMessage:'{0} removed',
     becauseYouLiked:'Because you liked "{0}"', swipeActionLike:'Liked', swipeActionNope:'Passed',
-    swipeActionSkip:'Skipped', notForMe:'Not for me', seenIt:'Already seen it',
-    wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other reason',
-    feedbackTitle:'Why are you not interested?', fromWatchlist:'Removed from watchlist',
-    crossMediaTitle:'You might also like', noDescription:'No description available',
-    search:'Search', searchPlaceholder:'Search title or author...', searchNoResults:'No results for "{0}"'
+    swipeActionSkip:'Skipped', notForMe:'Not for me', seenIt:'Already seen',
+    wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other',
+    feedbackTitle:'Why not?', fromWatchlist:'From watchlist',
+    crossMediaTitle:'You\'ll also like', noDescription:'No description',
+    search:'Search', searchPlaceholder:'Title or author...', searchNoResults:'Nothing for "{0}"'
   }
 };
 
@@ -360,6 +358,46 @@ class App {
     this._showCardModal(card, app);
   }
 
+  _spawnParticles(x, y, type) {
+    const emojis = { like: ['💚','✨','💫','🌟','💚','✨'], nope: ['💀','✖','🍂','💨','💀','✖'], super: ['⭐','👑','🔥','💫','⭐','👑'] };
+    const set = emojis[type] || emojis.like;
+    for (let i = 0; i < 8; i++) {
+      const p = document.createElement('span');
+      p.className = `particle particle-${type}`;
+      p.textContent = set[i % set.length];
+      const angle = (Math.random() - 0.5) * 140;
+      const dist = 50 + Math.random() * 100;
+      const px = Math.cos(angle * Math.PI / 180) * dist;
+      const py = Math.sin(angle * Math.PI / 180) * dist - 30;
+      const rot = (Math.random() - 0.5) * 120;
+      const size = 0.8 + Math.random() * 0.6;
+      p.style.cssText = `left:${x}px;top:${y}px;--px:${px}px;--py:${py}px;--pr:${rot}deg;animation-delay:${i * 0.03}s;font-size:${size}rem`;
+      document.body.appendChild(p);
+      setTimeout(() => p.remove(), 900);
+    }
+  }
+
+  _animateStatCount(el, target, duration = 800) {
+    const start = performance.now();
+    const initial = 0;
+    const step = (now) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      el.textContent = Math.round(initial + (target - initial) * eased);
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    el.textContent = '0';
+    el.classList.add('counting');
+    requestAnimationFrame(step);
+    setTimeout(() => el.classList.remove('counting'), duration + 50);
+  }
+
+  _wrapHeroText(text, className = '') {
+    return text.split(' ').map((word, i) =>
+      `<span class="hero-word ${className}" style="animation-delay:${i * 0.08}s">${word}</span>`
+    ).join(' ');
+  }
+
   // ===== ONBOARDING =====
   renderOnboarding(app) {
     const step = this.state.onboardingStep || 0;
@@ -543,8 +581,10 @@ class App {
           <div class="rf-info">
             <h2>${escapeHTML(item.title)}</h2>
             ${item.year ? `<span>${item.year}</span>` : ''}
-            ${item.genres ? `<p class="rf-genres">${item.genres.slice(0,3).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g)).join(' · ')}</p>` : ''}
+            ${item.genres ? `<p class="rf-genres">${item.genres.slice(0,3).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `${icon} ${name}`; }).join(' · ')}</p>` : ''}
           </div>
+          <span class="swipe-stamp swipe-stamp-like">${this.tr.like}</span>
+          <span class="swipe-stamp swipe-stamp-nope">${this.tr.nope}</span>
         </div>
         <div class="swipe-actions rapid-fire-actions">
           <button class="btn btn-nope rf-nope" title="Pass">✕</button>
@@ -554,7 +594,14 @@ class App {
     const cardEl = app.querySelector('.rapid-fire-card');
     if (cardEl) {
       new SwipeEngine(cardEl, dir => {
-        if (dir === 'right') this._rapidFireLikes.push(item);
+        if (dir === 'right') {
+          this._rapidFireLikes.push(item);
+          document.body.classList.add('swipe-flash-right');
+          setTimeout(() => document.body.classList.remove('swipe-flash-right'), 400);
+        } else if (dir === 'left') {
+          document.body.classList.add('swipe-flash-left');
+          setTimeout(() => document.body.classList.remove('swipe-flash-left'), 400);
+        }
         this._rapidFireIndex++;
         this.render();
       });
@@ -630,7 +677,8 @@ class App {
         addToWatchlist({ ...item, source: 'rapid-fire' });
       }
     });
-    this.state.onboardingStep = 3;
+    this.state.hasCompletedOnboarding = true;
+    this.state.onboardingStep = 4;
     this.save();
     this.render();
   }
@@ -842,24 +890,24 @@ class App {
       app.innerHTML = `
         <div class="empty-state">
           <span class="empty-state-icon">${icon}</span>
-          <h2>${this.lang === 'de' ? 'Dein Geschmack ist eine weisse Leinwand' : 'Your taste is a blank canvas'}</h2>
-          <p>${this.lang === 'de' ? 'Lass uns sie bemalen. Wische nach rechts auf das, was dein Interesse weckt.' : "Let's paint it. Swipe right on what catches your eye."}</p>
-          <button class="btn btn-primary" onclick="location.reload()">${this.lang === 'de' ? 'Los geht\'s' : 'Let\'s go'}</button>
+          <h2>${this._wrapHeroText(this.lang === 'de' ? 'Leere Leinwand.' : 'Blank slate.', 'big accent')}</h2>
+          <p>${this.lang === 'de' ? 'Wisch rechts auf alles, was dich anspricht.' : 'Swipe right on whatever catches your eye.'}</p>
+          <button class="btn btn-primary" onclick="location.reload()">${this.lang === 'de' ? 'Los' : 'Let\'s go'}</button>
         </div>`;
     } else if (this.watchlist.length === 0) {
       app.innerHTML = `
         <div class="empty-state">
           <span class="empty-state-icon">📚</span>
-          <h2>${this.lang === 'de' ? 'Die Regale sind leer' : 'The shelves are bare'}</h2>
-          <p>${this.lang === 'de' ? 'Lass uns deine naechste Obsession finden.' : "Let's go find your next obsession."}</p>
-          <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Zu den Entdeckungen' : 'Take me to Discover'}</button>
+          <h2>${this._wrapHeroText(this.lang === 'de' ? 'Regale leer.' : 'Shelves empty.', 'big')}</h2>
+          <p>${this.lang === 'de' ? 'Zeit, deine naechste Obsession zu finden.' : 'Time to find your next obsession.'}</p>
+          <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Entdecken' : 'Discover'}</button>
         </div>`;
     } else {
       app.innerHTML = `
         <div class="wrap-party">
           <span class="wrap-party-icon">🎉</span>
-          <h2>${this.lang === 'de' ? 'Du hast alles erobert!' : 'You\'ve seen it all!'}</h2>
-          <p>${this.lang === 'de' ? 'Dein Geschmack ist offiziell legendaer. Bereit fuer ein neues Universum?' : 'Your taste is officially legendary. Ready for a new universe?'}</p>
+          <h2>${this._wrapHeroText(this.lang === 'de' ? 'Alles gesehen!' : 'Seen it all!', 'big accent')}</h2>
+          <p>${this.lang === 'de' ? 'Geschmack: legendär. Neues Universum?' : 'Taste: legendary. New universe?'}</p>
           <button class="btn btn-primary" data-nav="discover">${this.lang === 'de' ? 'Neues Universum' : 'New Universe'}</button>
         </div>`;
     }
@@ -921,7 +969,8 @@ class App {
 
     const genreChips = filters.genres.map(g => {
       const isSelected = selectedGenres.includes(g.id);
-      return `<button class="filter-chip${isSelected ? ' active' : ''}" data-type="genre" data-id="${g.id}">${g.label}</button>`;
+      const icon = getGenreIcon(g.id, this.state.mediaType, this.lang);
+      return `<button class="filter-chip${isSelected ? ' active' : ''}" data-type="genre" data-id="${g.id}">${icon} ${g.label}</button>`;
     }).join('');
 
     const moodChips = filters.moods.map(m => {
@@ -989,6 +1038,11 @@ class App {
     const platformBadges = isGame ? this._renderPlatformBadges(card) : '';
     const playtimeBadge = isGame ? this._renderPlaytimeBadge(card) : '';
     const multiplayerBadge = isGame ? this._renderMultiplayerBadge(card) : '';
+    const steamTags = isGame ? this._renderSteamTags(card) : '';
+    const priceBadge = isGame ? this._renderPriceBadge(card) : '';
+    const reviewBadge = isGame ? this._renderReviewBadge(card) : '';
+    const metacriticBadge = isGame ? this._renderMetacriticBadge(card) : '';
+    const storeButtons = isGame ? this._renderStoreButtons(card) : '';
     const blindGameHook = isBlindGame ? this._getBlindGameHook(card) : '';
     const blindGameMechanics = isBlindGame ? this._getBlindGameMechanics(card) : '';
 
@@ -1032,7 +1086,7 @@ class App {
                   ${card.rating ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
                   <span class="card-type">${t}</span>
                 </div>
-                ${genreStr && !isBlind ? `<div class="card-genres-row">${escapeHTML(genreStr.split(',').slice(0, 3).join(', '))}</div>` : ''}
+                ${genreStr && !isBlind ? `<div class="card-genres-row">${(card.genres || []).slice(0, 3).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="card-genre-chip">${icon} ${escapeHTML(name)}</span>`; }).join('')}</div>` : ''}
                 ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview)}</p>` : ''}
                 ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
                 ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
@@ -1065,8 +1119,17 @@ class App {
                 ${platformBadges}
                 ${playtimeBadge}
                 ${multiplayerBadge}
+                ${metacriticBadge}
               </div>
+              <div class="game-card-steam">
+                ${steamTags}
+                ${priceBadge}
+                ${reviewBadge}
+              </div>
+              ${storeButtons}
             ` : ''}
+            <span class="swipe-stamp swipe-stamp-like">${this.tr.like}</span>
+            <span class="swipe-stamp swipe-stamp-nope">${this.tr.nope}</span>
             <span class="swipe-hint swipe-hint-like">${this.tr.like}</span>
             <span class="swipe-hint swipe-hint-nope">${this.tr.nope}</span>
             <span class="swipe-hint swipe-hint-super">★ Super</span>
@@ -1265,7 +1328,7 @@ class App {
           <div class="peek-meta">
             ${card.year ? `<span class="peek-year">${card.year}</span>` : ''}
             ${card.rating ? `<span class="peek-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
-            ${genreStr ? `<span class="peek-genres">${escapeHTML(genreStr)}</span>` : ''}
+            ${genreStr ? `<span class="peek-genres">${(card.genres || []).slice(0, 4).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="peek-genre-tag">${icon} ${escapeHTML(name)}</span>`; }).join('')}</span>` : ''}
           </div>
         </div>
         ${summary ? `<p class="peek-summary">${escapeHTML(summary)}</p>` : ''}
@@ -1533,6 +1596,21 @@ class App {
     const card = this.currentCards[this.currentCardIndex];
     if (!card) return;
 
+    // Spawn particles at screen center
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    if (dir === 'right') {
+      this._spawnParticles(cx, cy, 'like');
+      document.body.classList.add('swipe-flash-right');
+      setTimeout(() => document.body.classList.remove('swipe-flash-right'), 400);
+    } else if (dir === 'left') {
+      this._spawnParticles(cx, cy, 'nope');
+      document.body.classList.add('swipe-flash-left');
+      setTimeout(() => document.body.classList.remove('swipe-flash-left'), 400);
+    } else if (dir === 'up') {
+      this._spawnParticles(cx, cy, 'super');
+    }
+
     // Haptic feedback
     if (navigator.vibrate && dir !== 'up') {
       navigator.vibrate(dir === 'right' ? [15, 30, 15] : [20]);
@@ -1645,6 +1723,66 @@ class App {
     return `<span class="multiplayer-badge" style="--mp-color:${mt.color}">${mt.icon} ${mt.label}</span>`;
   }
 
+  _renderSteamTags(card) {
+    const tags = card.steamTags || [];
+    if (!tags.length) return '';
+    return `<div class="steam-tags">${tags.slice(0, 4).map(t =>
+      `<span class="steam-tag">${escapeHTML(typeof t === 'string' ? t : t.name)}</span>`
+    ).join('')}</div>`;
+  }
+
+  _renderPriceBadge(card) {
+    if (card.price === undefined || card.price === null) return '';
+    if (card.isFree) return '<span class="price-badge free">Free</span>';
+    if (card.discount > 0) {
+      return `<span class="price-badge discount">-${card.discount}%</span><span class="price-badge">${escapeHTML(card.price)}</span>`;
+    }
+    if (card.price) return `<span class="price-badge">${escapeHTML(card.price)}</span>`;
+    return '';
+  }
+
+  _renderReviewBadge(card) {
+    if (card.reviewScore === null || card.reviewScore === undefined) return '';
+    const score = card.reviewScore;
+    const count = card.reviewCount || 0;
+    if (count < 10) return '';
+    let colorClass = 'mixed';
+    if (score >= 95 && count >= 500) colorClass = 'overwhelming';
+    else if (score >= 80) colorClass = 'positive';
+    else if (score >= 70) colorClass = 'mostly-positive';
+    else if (score >= 40) colorClass = 'mixed';
+    else colorClass = 'negative';
+    const desc = this.lang === 'de' ? (card.reviewDescDe || card.reviewDesc || '') : (card.reviewDesc || '');
+    return `<span class="review-badge ${colorClass}" title="${escapeHTML(desc)} - ${count.toLocaleString()} reviews">
+      <span class="review-score">${score}%</span>
+      <span class="review-label">${escapeHTML(desc)}</span>
+    </span>`;
+  }
+
+  _renderMetacriticBadge(card) {
+    if (!card.metacritic) return '';
+    let colorClass = 'mc-mixed';
+    if (card.metacritic >= 75) colorClass = 'mc-good';
+    else if (card.metacritic >= 50) colorClass = 'mc-mixed';
+    else colorClass = 'mc-bad';
+    return `<span class="metacritic-badge ${colorClass}">MC ${card.metacritic}</span>`;
+  }
+
+  _renderStoreButtons(card) {
+    if (!card.steamAppId) return '';
+    return `
+      <div class="store-buttons">
+        <a href="steam://store/${card.steamAppId}" class="store-btn steam-deep" title="Open in Steam">
+          <span class="store-btn-icon">🎮</span>
+          <span class="store-btn-text">Steam</span>
+        </a>
+        <a href="https://store.steampowered.com/app/${card.steamAppId}" target="_blank" rel="noopener" class="store-btn steam-web" title="View on Steam">
+          <span class="store-btn-icon">🌐</span>
+          <span class="store-btn-text">Store</span>
+        </a>
+      </div>`;
+  }
+
   _getBlindGameHook(card) {
     const overview = (card.overview || '').toLowerCase();
     const genres = (card.genres || []).join(' ').toLowerCase();
@@ -1660,7 +1798,7 @@ class App {
     if (/platformer|metroidvania/.test(genres)) return 'Precision jumping meets rewarding exploration.';
     if (/racing|rennspiel/.test(genres)) return 'Feel the speed, own the track, leave everyone behind.';
     if (/fighting|kampf/.test(genres)) return 'Master combos, read your opponent, land the perfect strike.';
-    if (/adventure|abenteuer/.test(genres)) return 'An unforgettable journey filled with wonder and discovery.';
+    if (/adventure|abenteuer/.test(genres)) return 'Explore wild lands, solve old secrets, survive the unknown.';
     return card.overview ? card.overview.split('.')[0] + '.' : 'A game worth your time.';
   }
 
@@ -1837,7 +1975,7 @@ class App {
       <div class="card-modal">
         <button class="modal-close" aria-label="Close">✕</button>
         <div class="modal-hero">
-          ${card.cover ? `<img src="${escapeHTML(card.cover)}" alt="" class="modal-cover">` : ''}
+          ${createImageWithFallback(card.cover, card.title, 'modal-cover', isGame ? '🎮' : isBook ? '📚' : '🎬')}
         </div>
         <div class="modal-body">
           <h2>${escapeHTML(card.title)}</h2>
@@ -1849,7 +1987,7 @@ class App {
           ${isGame ? `
             <div class="modal-game-meta">
               ${card.platforms?.length ? `<div class="modal-platforms">${card.platforms.map(p => `<span class="modal-platform">${escapeHTML(p.abbr || p.name)}</span>`).join('')}</div>` : ''}
-              ${card.genres?.length ? `<div class="modal-genres">${card.genres.map(g => `<span class="modal-genre">${escapeHTML(g)}</span>`).join('')}</div>` : ''}
+              ${card.genres?.length ? `<div class="modal-genres">${card.genres.map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="modal-genre">${icon} ${escapeHTML(name)}</span>`; }).join('')}</div>` : ''}
               ${card.modes?.length ? `<p class="modal-modes">🎮 ${card.modes.join(', ')}</p>` : ''}
             </div>
           ` : ''}
@@ -2083,7 +2221,7 @@ class App {
             <div class="cross-media-cards">
               ${candidates.map(c => `
                 <div class="cross-media-card" data-id="${escapeHTML(c.id)}">
-                  ${c.cover ? `<img src="${escapeHTML(c.cover)}" alt="">` : `<div style="height:100px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:2rem">${c.type === 'game' || c.source === 'igdb' ? '🎮' : '🎬'}</div>`}
+                  ${createImageWithFallback(c.cover, c.title, 'cross-media-img', c.type === 'game' || c.source === 'igdb' ? '🎮' : '🎬')}
                   <div class="cm-info">
                     <div class="cm-title">${escapeHTML(c.title)}</div>
                     <div class="cm-meta">${c.year || ''} · ${c.type === 'game' || c.source === 'igdb' ? 'Game' : 'Movie'}</div>
@@ -2331,7 +2469,7 @@ class App {
       const isGame = item.type === 'game' || item.source === 'igdb';
       return `
       <div class="list-item" data-id="${escapeHTML(item.id)}">
-        ${item.cover ? `<img class="list-cover" src="${escapeHTML(item.cover)}" alt="">` : `<div class="list-cover placeholder">${isGame ? '🎮' : '📚'}</div>`}
+        ${createImageWithFallback(item.cover, item.title, 'list-cover', isGame ? '🎮' : '📚')}
         <div class="list-info">
           <strong>${escapeHTML(item.title)}</strong>
           ${item.author ? `<span class="list-meta">${escapeHTML(item.author)}</span>` : ''}
@@ -2385,7 +2523,7 @@ class App {
         <p>${this.tr.couchCoopSub}</p>
         <div class="roulette-wheel">
           <div class="roulette-item" id="roulette-display">
-            ${items[0].cover ? `<img src="${escapeHTML(items[0].cover)}" alt="">` : ''}
+            ${createImageWithFallback(items[0].cover, items[0].title, 'roulette-img', '🎰')}
             <span>${escapeHTML(items[0].title)}</span>
           </div>
         </div>
@@ -2402,8 +2540,7 @@ class App {
       const doTick = () => {
         currentIdx = (currentIdx + 1) % items.length;
         const item = items[currentIdx];
-        display.innerHTML = item.cover ? `<img src="${escapeHTML(item.cover)}" alt="">` : '';
-        display.innerHTML += `<span>${escapeHTML(item.title)}</span>`;
+        display.innerHTML = createImageWithFallback(item.cover, item.title, 'roulette-img', '🎰') + `<span>${escapeHTML(item.title)}</span>`;
         display.classList.add('spinning');
         spins++;
         if (spins < 5) speed = Math.max(30, speed - 10);
@@ -2506,16 +2643,17 @@ class App {
           </div>
         ${this._renderExperimentStats()}
         <div class="stat-grid">
-          <div class="stat"><span class="stat-num">${total}</span><span class="stat-label">${this.lang === 'de' ? 'Bewertet' : 'Rated'}</span></div>
-          <div class="stat"><span class="stat-num">${liked}</span><span class="stat-label">❤️</span></div>
-          <div class="stat"><span class="stat-num">${noped}</span><span class="stat-label">👎</span></div>
-          <div class="stat"><span class="stat-num">${skipped}</span><span class="stat-label">⏭</span></div>
+          <div class="stat"><span class="stat-num" data-target="${total}">0</span><span class="stat-label">${this.lang === 'de' ? 'Bewertet' : 'Rated'}</span></div>
+          <div class="stat"><span class="stat-num" data-target="${liked}">0</span><span class="stat-label">❤️</span></div>
+          <div class="stat"><span class="stat-num" data-target="${noped}">0</span><span class="stat-label">👎</span></div>
+          <div class="stat"><span class="stat-num" data-target="${skipped}">0</span><span class="stat-label">⏭</span></div>
         </div>
         ${topGenres.length ? `
           <h3>${this.lang === 'de' ? 'Top Genres' : 'Top Genres'}</h3>
-          <div class="genre-bars">${topGenres.map(([g, c]) => `
-            <div class="genre-bar"><span>${escapeHTML(g)}</span><div class="bar-fill" style="width:${Math.min(c / total * 100, 100)}%"></div><span>${c}</span></div>
-          `).join('')}</div>` : ''}
+          <div class="genre-bars">${topGenres.map(([g, c]) => {
+            const icon = getGenreIcon(Object.entries(this._genreMap).find(([k,v]) => v === g)?.[0] || g, this.state.mediaType, this.lang);
+            return `<div class="genre-bar"><span class="genre-bar-icon">${icon}</span><span>${escapeHTML(g)}</span><div class="bar-fill" style="width:${Math.min(c / total * 100, 100)}%"></div><span>${c}</span></div>`;
+          }).join('')}</div>` : ''}
         <button class="btn btn-back">← ${this.lang === 'de' ? 'Zurueck' : 'Back'}</button>
         ${this._navHTML('stats')}
       </div>`;
@@ -2543,6 +2681,11 @@ class App {
     });
     app.querySelector('.btn-back')?.addEventListener('click', () => this.renderDiscover(app));
     this._bindNav(app);
+    // Count-up animation for stat numbers
+    app.querySelectorAll('.stat-num[data-target]').forEach(el => {
+      const target = parseInt(el.dataset.target, 10);
+      if (target > 0) this._animateStatCount(el, target);
+    });
   }
 
   _renderExperimentStats() {

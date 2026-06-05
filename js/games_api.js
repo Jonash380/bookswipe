@@ -1,4 +1,5 @@
 import { safeGetJSON, safeSetJSON } from './utils.js';
+import { steamAPI } from './steam.js';
 
 const IGDB_FIELDS = `
   id,name,slug,summary,storyline,url,
@@ -126,4 +127,130 @@ export async function fetchGamesForDiscovery(genreIds = [], platformIds = [], li
   const body = `fields ${IGDB_FIELDS}; where ${conditions.join(' & ')}; sort total_rating desc; limit ${limit};`;
   const data = await _igdbFetch(body);
   return data.map(_mapGame);
+}
+
+// ---- Steam Integration ----
+
+export async function enrichGamesWithSteam(games) {
+  if (!games || !games.length) return games;
+  const steamIds = games
+    .map(g => {
+      if (g.steamAppId) return g.steamAppId;
+      if (g.igdb_id) return null;
+      return null;
+    })
+    .filter(Boolean);
+  if (!steamIds.length) return games;
+  const steamData = await steamAPI.getAppDetails(steamIds.slice(0, 5));
+  const reviewPromises = steamIds.slice(0, 5).map(id => steamAPI.getReviews(id));
+  const reviews = await Promise.allSettled(reviewPromises);
+  const reviewMap = {};
+  reviews.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value) {
+      reviewMap[steamIds[i]] = r.value;
+    }
+  });
+  return games.map(g => {
+    const appId = g.steamAppId;
+    if (!appId || !steamData[appId]) return g;
+    const s = steamData[appId];
+    const review = reviewMap[appId];
+    return {
+      ...g,
+      steamData: s,
+      steamTags: s.steamTags || [],
+      reviewScore: review?.score || null,
+      reviewCount: review?.total || 0,
+      reviewSentiment: review?.reviewScore || null,
+      reviewDesc: review?.reviewDesc || '',
+      reviewDescDe: review?.reviewDescDe || '',
+      price: s.price || null,
+      priceCents: s.priceCents || 0,
+      isFree: s.isFree || false,
+      discount: s.discount || 0,
+      metacritic: s.metacritic || null,
+      headerImage: s.headerImage || g.cover,
+      screenshots: s.screenshots?.length ? s.screenshots : g.screenshots,
+      genres: s.genres?.length ? s.genres : g.genres,
+      platforms: s.platforms?.length
+        ? s.platforms.map(p => ({ name: p }))
+        : g.platforms,
+      achievements: s.achievements || 0,
+      developer: s.developers?.[0] || g.developer || '',
+      publisher: s.publishers?.[0] || g.publisher || '',
+      storeUrl: steamAPI.getStoreLink(appId),
+      deepLink: steamAPI.getSteamDeepLink(appId)
+    };
+  });
+}
+
+export async function fetchSteamTopSellers(options = {}) {
+  const results = await steamAPI.searchTopSellers(options);
+  if (!results.length) return [];
+  const appIds = results.map(r => r.appId).slice(0, 5);
+  const details = await steamAPI.getAppDetails(appIds, options.cc);
+  const reviewPromises = appIds.map(id => steamAPI.getReviews(id));
+  const reviews = await Promise.allSettled(reviewPromises);
+  const reviewMap = {};
+  reviews.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value) {
+      reviewMap[appIds[i]] = r.value;
+    }
+  });
+  return results.map(r => {
+    const s = details[r.appId] || {};
+    const review = reviewMap[r.appId];
+    return {
+      id: `steam-${r.appId}`,
+      title: r.name || s.name || '',
+      cover: r.headerImage || s.headerImage || '',
+      headerImage: r.headerImage || s.headerImage || '',
+      steamAppId: r.appId,
+      steamData: s,
+      reviewScore: review?.score || null,
+      reviewCount: review?.total || 0,
+      reviewSentiment: review?.reviewScore || null,
+      price: s.price || (r.isFree ? 'Free' : null),
+      discount: s.discount || r.discount || 0,
+      genres: s.genres || [],
+      platforms: s.platforms || [],
+      source: 'steam',
+      type: 'game',
+      storeUrl: steamAPI.getStoreLink(r.appId),
+      deepLink: steamAPI.getSteamDeepLink(r.appId)
+    };
+  });
+}
+
+export async function fetchSteamByTags(tagIds, options = {}) {
+  const results = await steamAPI.searchByTags(tagIds, options);
+  if (!results.length) return [];
+  const appIds = results.map(r => r.appId).slice(0, 5);
+  const details = await steamAPI.getAppDetails(appIds, options.cc);
+  return results.map(r => {
+    const s = details[r.appId] || {};
+    return {
+      id: `steam-${r.appId}`,
+      title: r.name || s.name || '',
+      cover: r.headerImage || s.headerImage || '',
+      headerImage: r.headerImage || s.headerImage || '',
+      steamAppId: r.appId,
+      steamData: s,
+      price: s.price || null,
+      discount: s.discount || 0,
+      genres: s.genres || [],
+      platforms: s.platforms || [],
+      source: 'steam',
+      type: 'game',
+      storeUrl: steamAPI.getStoreLink(r.appId),
+      deepLink: steamAPI.getSteamDeepLink(r.appId)
+    };
+  });
+}
+
+export async function fetchSteamAppDetails(appId, cc = 'us') {
+  const data = await steamAPI.getAppDetails(appId, cc);
+  if (!data || !data[appId]) return null;
+  const review = await steamAPI.getReviews(appId);
+  return steamAPI.enrichGameData(data[appId], review);
 }

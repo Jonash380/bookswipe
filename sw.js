@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bookswipe-v6';
+const CACHE_NAME = 'bookswipe-v7';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -8,6 +8,7 @@ const STATIC_ASSETS = [
   '/js/media.js',
   '/js/games.js',
   '/js/games_api.js',
+  '/js/steam.js',
   '/js/api.js',
   '/js/swipe.js',
   '/js/enrichment.js',
