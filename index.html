@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="BookSwipe - Discover books, movies & games by swiping. Your personal taste companion.">
-<meta name="theme-color" content="#0f0f1a">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f0f1a">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f7">
+<meta name="color-scheme" content="dark light">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="BookSwipe">
@@ -29,11 +31,16 @@
 </noscript>
 <div id="app"></div>
 <div id="toast-container"></div>
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=7"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
-    navigator.serviceWorker.register('/sw.js').then(function(reg) {
+    // Force-update: unregister old service workers, then register fresh
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+      return Promise.all(regs.map(function(r) { return r.unregister(); }));
+    }).then(function() {
+      return navigator.serviceWorker.register('/sw.js?v=7');
+    }).then(function(reg) {
       console.log('SW registered:', reg.scope);
     }).catch(function(err) {
       console.log('SW registration failed:', err);

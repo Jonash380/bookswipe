@@ -20,7 +20,7 @@ export class SwipeEngine {
       mouseleave: e => { if (this.swiping) this._end(e); }
     };
     this.el.addEventListener('touchstart', this._handlers.touchstart, { passive: true });
-    this.el.addEventListener('touchmove', this._handlers.touchmove, { passive: true });
+    this.el.addEventListener('touchmove', this._handlers.touchmove, { passive: false });
     this.el.addEventListener('touchend', this._handlers.touchend);
     this.el.addEventListener('mousedown', this._handlers.mousedown);
     this.el.addEventListener('mousemove', this._handlers.mousemove);
@@ -37,9 +37,12 @@ export class SwipeEngine {
     this.lastTime = performance.now();
     this.velocityX = 0;
     this.velocityY = 0;
+    this.el.style.transition = 'none';
+    this.el.classList.add('dragging');
   }
   _move(e) {
     if (!this.swiping) return;
+    e.preventDefault();
     const now = performance.now();
     const x = e.clientX || e.touches?.[0]?.clientX || 0;
     const y = e.clientY || e.touches?.[0]?.clientY || 0;
@@ -49,9 +52,9 @@ export class SwipeEngine {
     // Track velocity (low-pass filtered for smoothness)
     const dt = now - this.lastTime;
     if (dt > 0) {
-      const vx = (x - this.lastX) / dt * 16; // normalize to ~60fps frame
+      const vx = (x - this.lastX) / dt * 16;
       const vy = (y - this.lastY) / dt * 16;
-      this.velocityX = this.velocityX * 0.6 + vx * 0.4; // lerp for smoothness
+      this.velocityX = this.velocityX * 0.6 + vx * 0.4;
       this.velocityY = this.velocityY * 0.6 + vy * 0.4;
     }
     this.lastX = x;
@@ -59,22 +62,31 @@ export class SwipeEngine {
     this.lastTime = now;
 
     const angle = Math.atan2(this.dy, this.dx);
-    // Rotation resistance: card feels heavy at short distances (less rotation),
-    // lighter at long distances (full rotation). Creates a "breaking friction" feel.
     const distFactor = Math.min(Math.abs(this.dx) / 100, 1);
     const rotation = (angle * 180 / Math.PI) * 0.12 * distFactor;
-    this.el.style.transform = `translateX(${this.dx}px) rotate(${rotation}deg)`;
+    const tiltX = Math.max(-12, Math.min(12, this.dy * 0.04));
+    this.el.style.transform = `translateX(${this.dx}px) rotate(${rotation}deg) perspective(800px) rotateX(${tiltX}deg)`;
     this.el.style.opacity = Math.max(0.4, 1 - Math.abs(this.dx) / 350);
+
+    // Update directional CSS classes for visual feedback
+    this.el.classList.remove('swiping-right', 'swiping-left', 'swiping-up');
+    if (this.dx > 30) {
+      this.el.classList.add('swiping-right');
+    } else if (this.dx < -30) {
+      this.el.classList.add('swiping-left');
+    } else if (this.dy < -40) {
+      this.el.classList.add('swiping-up');
+    }
   }
   _end() {
     if (!this.swiping) return;
     this.swiping = false;
+    this.el.classList.remove('dragging');
     const absDx = Math.abs(this.dx);
     const absDy = Math.abs(this.dy);
     const absVx = Math.abs(this.velocityX);
     const absVy = Math.abs(this.velocityY);
 
-    // Use velocity to detect flicky swipes (fast motion over short distance)
     const fastFlick = absVx > 8 || absVy > 8;
     const distThreshold = fastFlick ? 30 : 100;
     const upThreshold = fastFlick ? 20 : 80;
@@ -84,23 +96,36 @@ export class SwipeEngine {
       let dir;
       if (absDy > upThreshold && this.dy < 0) dir = 'up';
       else dir = this.dx > 0 ? 'right' : 'left';
-      const offX = dir === 'up' ? 0 : (dir === 'right' ? 500 : -500);
-      const offY = dir === 'up' ? -500 : 0;
-      // Clean ease-out for fly-off — no overshoot
-      this.el.style.transition = 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease';
-      this.el.style.transform = `translateX(${offX}px) translateY(${offY}px) rotate(${this.velocityX * 2}deg)`;
+
+      // Fly off with rotation based on velocity
+      const flyRotation = this.velocityX * 3;
+      const offX = dir === 'up' ? 0 : (dir === 'right' ? window.innerWidth * 1.2 : -window.innerWidth * 1.2);
+      const offY = dir === 'up' ? -window.innerHeight * 1.2 : 0;
+      this.el.style.transition = 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease';
+      this.el.style.transform = `translateX(${offX}px) translateY(${offY}px) rotate(${flyRotation}deg) scale(0.9)`;
       this.el.style.opacity = '0';
-      this.onSwipe(dir);
+
+      // Trigger super-like flash
+      if (dir === 'up') {
+        document.body.classList.add('super-like-flash');
+        setTimeout(() => document.body.classList.remove('super-like-flash'), 350);
+      }
+
+      setTimeout(() => {
+        this.el.classList.remove('swiping-right', 'swiping-left', 'swiping-up');
+        this.onSwipe(dir);
+      }, 300);
     } else {
-      // Springy bounce-back: card snaps from dragged position with overshoot
-      this.el.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)';
+      // Springy bounce-back
+      this.el.classList.remove('swiping-right', 'swiping-left', 'swiping-up');
+      this.el.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease';
       this.el.style.transform = '';
       this.el.style.opacity = '';
     }
     this.dx = 0; this.dy = 0;
     this.velocityX = 0;
     this.velocityY = 0;
-    setTimeout(() => { this.el.style.transition = ''; }, 300);
+    setTimeout(() => { if (this.el) this.el.style.transition = ''; }, 500);
   }
   get isSwiping() { return this.swiping; }
   didSwipe() { return this._didSwipe; }

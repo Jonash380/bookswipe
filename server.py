@@ -26,6 +26,22 @@ from collections import OrderedDict, defaultdict
 from http.server import HTTPServer
 from socketserver import ThreadingMixIn
 
+# Auto-load .env file if present (before reading env vars)
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_env_path):
+    try:
+        with open(_env_path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _k, _v = _line.split('=', 1)
+                    _k = _k.strip().removeprefix('export ')
+                    _v = _v.strip().strip('"').strip("'")
+                    if _k:
+                        os.environ.setdefault(_k, _v)
+    except Exception:
+        pass
+
 PORT = int(os.environ.get('BOOKSWIPE_PORT', 3000))
 BIND = os.environ.get('BOOKSWIPE_BIND', '127.0.0.1')
 DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
@@ -35,7 +51,6 @@ TRAKT_BASE = 'https://api.trakt.tv'
 GB_BASE = 'https://www.googleapis.com/books/v1'
 IGDB_BASE = 'https://api.igdb.com/v4'
 IGDB_AUTH = 'https://id.twitch.tv/oauth2/token'
-STEAM_STORE_BASE = 'https://store.steampowered.com/api'
 
 TMDB_KEY = os.environ.get('TMDB_API_KEY', '')
 TRAKT_KEY = os.environ.get('TRAKT_API_KEY', '')
@@ -83,7 +98,7 @@ _cache = LRUCache(max_size=2000)
 _rate_limits = defaultdict(list)
 _rate_lock = threading.Lock()
 RATE_WINDOW = 60
-RATE_MAX = 30
+RATE_MAX = 200
 
 def _check_rate(ip):
     now = time.time()
@@ -123,8 +138,14 @@ _OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find)/')
 _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
 _IGDB_BODY_RE = re.compile(r'^(fields|search|where|sort|limit|offset)')
-# Steam Store API: appdetails, featured, search (JSON), reviews
-_OK_STEAM = re.compile(r'^/(appdetails|featured|reviews|search)$')
+
+# In-memory party sessions (swipe party feature)
+_parties = {}
+_party_lock = threading.Lock()
+
+# AI concierge config (set OPENAI_API_KEY to enable LLM features)
+_OPENAI_KEY = os.environ.get('OPENAI_API_KEY', '')
+_OPENAI_BASE = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 
 def fetch(url, headers=None, ttl=300, method='GET', body=None):
     cache_key = f"{method}:{url}:{body or ''}"
@@ -167,7 +188,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/trakt/'):   return self._trakt(p[13:])
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
-        if p.startswith('/proxy/steam/'):   return self._steam(p[13:])
+        if p.startswith('/proxy/party/'):   return self._party_get(p[13:])
         super().do_GET()
 
     def do_POST(self):
@@ -176,6 +197,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json({'error': 'Rate limit exceeded'}, 429)
         p = self.path
         if p.startswith('/proxy/igdb/'):    return self._igdb_post(p[12:])
+        if p.startswith('/proxy/party/'):   return self._party_post(p[13:])
+        if p.startswith('/proxy/ai/'):      return self._ai_post(p[10:])
         self._json({'error': 'Method not allowed'}, 405)
 
     def _tmdb(self, path):
@@ -185,6 +208,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json({'error': 'Invalid path', 'status': 400}, 400)
         # Append api_key as query param (TMDB v3 key doesn't work as Bearer token)
         sep = '&' if '?' in path else '?'
+        path = path.lstrip('/')
         data = fetch(f'{TMDB_BASE}/{path}{sep}api_key={TMDB_KEY}', ttl=300)
         if 'status' in data and isinstance(data['status'], int):
             return self._json(data, data['status'])
@@ -239,6 +263,153 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not body or not _IGDB_BODY_RE.match(body.strip()):
             return self._json({'error': 'Invalid IGDB query', 'status': 400}, 400)
         return self._do_igdb_request(body, token)
+
+    # ---- Swipe Party endpoints ----
+    def _party_post(self, path):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 50000:
+            return self._json({'error': 'Body too large'}, 400)
+        try:
+            body = json.loads(self.rfile.read(content_length))
+        except Exception:
+            return self._json({'error': 'Invalid JSON'}, 400)
+        if path == 'create':
+            return self._party_create(body)
+        if path == 'join':
+            return self._party_join(body)
+        if path == 'swipe':
+            return self._party_swipe(body)
+        return self._json({'error': 'Unknown party action'}, 404)
+
+    def _party_get(self, path):
+        qs = path.split('?', 1)[1] if '?' in path else ''
+        params = urllib.parse.parse_qs(qs)
+        session_id = params.get('session', [None])[0]
+        if not session_id:
+            return self._json({'error': 'Missing session'}, 400)
+        with _party_lock:
+            party = _parties.get(session_id)
+            if not party:
+                return self._json({'error': 'Session not found'}, 404)
+            # Clean expired sessions (> 30 min)
+            if time.time() - party.get('created', 0) > 1800:
+                del _parties[session_id]
+                return self._json({'error': 'Session expired'}, 410)
+        return self._json({
+            'participants': party.get('participants', []),
+            'results': party.get('results', {}),
+            'deck': party.get('deck', []),
+        })
+
+    def _party_create(self, body):
+        session_id = 'p' + str(int(time.time() * 1000))[-8:]
+        with _party_lock:
+            _parties[session_id] = {
+                'id': session_id,
+                'created': time.time(),
+                'host': body.get('host', ''),
+                'deck': body.get('deck', []),
+                'participants': [body.get('host', 'host')],
+                'results': {},
+            }
+        log.info('Party created: %s', session_id)
+        return self._json({'id': session_id})
+
+    def _party_join(self, body):
+        session_id = body.get('session', '')
+        user = body.get('user', '')
+        if not session_id or not user:
+            return self._json({'error': 'Missing session or user'}, 400)
+        with _party_lock:
+            party = _parties.get(session_id)
+            if not party:
+                return self._json({'error': 'Session not found'}, 404)
+            if user not in party['participants']:
+                party['participants'].append(user)
+        return self._json({'ok': True})
+
+    def _party_swipe(self, body):
+        session_id = body.get('session', '')
+        item_id = body.get('itemId', '')
+        direction = body.get('direction', '')
+        user = body.get('user', '')
+        with _party_lock:
+            party = _parties.get(session_id)
+            if not party:
+                return self._json({'error': 'Session not found'}, 404)
+            if item_id not in party['results']:
+                party['results'][item_id] = {'likes': 0, 'nopes': 0, 'title': item_id}
+            if direction == 'right':
+                party['results'][item_id]['likes'] = party['results'][item_id].get('likes', 0) + 1
+            elif direction == 'left':
+                party['results'][item_id]['nopes'] = party['results'][item_id].get('nopes', 0) + 1
+        return self._json({'ok': True})
+
+    # ---- AI Concierge endpoint ----
+    def _ai_post(self, path):
+        if path not in ('concierge',):
+            return self._json({'error': 'Unknown AI endpoint'}, 404)
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 10000:
+            return self._json({'error': 'Body too large'}, 400)
+        try:
+            body = json.loads(self.rfile.read(content_length))
+        except Exception:
+            return self._json({'error': 'Invalid JSON'}, 400)
+        user_message = body.get('message', '')
+        lang = body.get('lang', 'de')
+        profile = body.get('profile', {})
+        chat_history = body.get('history', [])
+
+        # If OpenAI API key is set, use real LLM
+        if _OPENAI_KEY:
+            return self._ai_llm(user_message, lang, profile, chat_history)
+        # Fallback: return a suggestion to use rule-based concierge
+        return self._json({
+            'response': '',
+            'fallback': True,
+        })
+
+    def _ai_llm(self, message, lang, profile, history):
+        top_genres = profile.get('topGenres', [])
+        media_type = profile.get('mediaType', 'movies')
+        system_prompt = (
+            'Du bist ein Media-Concierge für BookSwipe. ' if lang == 'de'
+            else 'You are a media concierge for BookSwipe. '
+        ) + (
+            f'Der Nutzer mag: {top_genres}. Medientyp: {media_type}. '
+            f'Gib kurze, hilfreiche Empfehlungen (max 3 Sätze). Sei freundlich und enthusiastisch.'
+            if lang == 'de' else
+            f'User likes: {top_genres}. Media type: {media_type}. '
+            f'Give short, helpful recommendations (max 3 sentences). Be friendly and enthusiastic.'
+        )
+        try:
+            req_body = json.dumps({
+                'model': 'gpt-3.5-turbo',
+                'messages': [
+                    {'role': 'system', 'content': system_prompt},
+                    *[{'role': h['role'], 'content': h['content']} for h in (history or [])[-6:]],
+                    {'role': 'user', 'content': message},
+                ],
+                'max_tokens': 200,
+                'temperature': 0.7,
+            }).encode()
+            req = urllib.request.Request(
+                f'{_OPENAI_BASE}/chat/completions',
+                data=req_body,
+                method='POST'
+            )
+            req.add_header('Authorization', f'Bearer {_OPENAI_KEY}')
+            req.add_header('Content-Type', 'application/json')
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.loads(r.read())
+                response = data['choices'][0]['message']['content'].strip()
+                return self._json({'response': response})
+        except Exception as e:
+            log.warning('AI concierge error: %s', e)
+            return self._json({'response': '', 'fallback': True})
+
+    # ---- End AI Concierge ----
 
     def _do_igdb_request(self, body, token):
         cache_key = f'igdb:{body}'

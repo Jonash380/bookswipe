@@ -5,4 +5,5 @@ server.log
 .DS_Store
 sync.log
 .env
+start-with-keys.sh
 node_modules/

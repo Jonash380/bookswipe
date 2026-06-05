@@ -6,7 +6,7 @@ import { fetchBooks } from './api.js';
 import { SwipeEngine } from './swipe.js';
 import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
-import { getTMDBDetails, searchTMDB } from './tmdb.js';
+import { getTMDBDetails, searchTMDB, getTMDBVideos } from './tmdb.js';
 import { renderVibeBars, detectSpoilers, generateElevatorPitchFull } from './descriptions.js';
 import { mapTMDBTags, computeVibeScores, mapGameTags, mapMediaDNA } from './tag_mapper.js';
 import { searchGames, fetchGamesByGenre, fetchPopularGames, fetchGamesForDiscovery } from './games_api.js';
@@ -879,6 +879,7 @@ class App {
       return (data.results || []).map(m => ({
         id: `tmdb-${m.id}`, tmdb_id: m.id, title: m.title || m.name,
         cover: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : '',
+        backdrop: m.backdrop_path ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` : '',
         year: parseInt((m.release_date || m.first_air_date || '').slice(0, 4)) || null,
         overview: m.overview, genres: m.genre_ids, source: 'tmdb', type,
         rating: m.vote_average, vote_count: m.vote_count
@@ -1015,7 +1016,28 @@ class App {
         ${this._renderFilterChipsHtml()}
         <div class="card-stack">
           <div class="${cardClass}" data-id="${escapeHTML(card.id)}">
-            ${card.cover ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.cover)}" alt="${escapeHTML(card.title)}">` : `<div class="card-cover placeholder">${isGame ? '🎮' : '📚'}</div>`}
+            <div class="card-hero">
+              ${card.backdrop || card.cover
+                ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.backdrop || card.cover)}" alt="${escapeHTML(card.title)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+                : ''}
+              <div class="card-cover placeholder" ${card.backdrop || card.cover ? 'style="display:none"' : ''}>${isGame ? '🎮' : isBook ? '📚' : '🎬'}</div>
+              <div class="card-hero-overlay"></div>
+              ${card._score != null ? `<span class="card-match-badge">${Math.round(card._score * 100)}%</span>` : ''}
+            </div>
+            <div class="card-side">
+              <div class="card-side-info">
+                <h2 class="card-title">${escapeHTML(card.title)}</h2>
+                <div class="card-meta-row">
+                  ${card.year ? `<span class="card-year">${card.year}</span>` : ''}
+                  ${card.rating ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
+                  <span class="card-type">${t}</span>
+                </div>
+                ${genreStr && !isBlind ? `<div class="card-genres-row">${escapeHTML(genreStr.split(',').slice(0, 3).join(', '))}</div>` : ''}
+                ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview)}</p>` : ''}
+                ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
+                ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
+              </div>
+            </div>
             ${isBlindGame ? `
               <div class="blind-game-overlay">
                 <div class="blind-game-mechanics">${blindGameMechanics}</div>
@@ -1045,16 +1067,6 @@ class App {
                 ${multiplayerBadge}
               </div>
             ` : ''}
-            <div class="card-info ${isBlindGame ? 'blind-game-info' : ''}">
-              ${!isBlindGame ? `<h2 class="card-title">${escapeHTML(card.title)}</h2>` : ''}
-              ${card.year && !isBlindGame ? `<span class="card-year">${card.year}</span>` : ''}
-              <span class="card-type">${t}</span>
-              ${card.rating && !isBlindGame ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
-              ${genreStr && !isBlind ? `<p class="card-genres">${escapeHTML(genreStr)}</p>` : ''}
-              ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview.slice(0, 120))}${card.overview.length > 120 ? '...' : ''}</p>` : ''}
-              ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
-              ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
-            </div>
             <span class="swipe-hint swipe-hint-like">${this.tr.like}</span>
             <span class="swipe-hint swipe-hint-nope">${this.tr.nope}</span>
             <span class="swipe-hint swipe-hint-super">★ Super</span>
@@ -1074,14 +1086,12 @@ class App {
       if (this._cardCleanupFns) this._cardCleanupFns.forEach(fn => fn());
       this._cardCleanupFns = [];
       this.swipeEngine = new SwipeEngine(cardEl, dir => this.handleSwipe(dir));
-      if (isGame) {
-        const hp = this._setupHoverPreview(cardEl, card);
-        const ag = this._setupAmbientGlow(cardEl, card);
-        const tl = this._setupTiltEffect(cardEl);
-        if (hp) this._cardCleanupFns.push(hp);
-        if (ag) this._cardCleanupFns.push(ag);
-        if (tl) this._cardCleanupFns.push(tl);
-      }
+      const hp = this._setupHoverPreview(cardEl, card);
+      const ag = this._setupAmbientGlow(cardEl, card);
+      const tl = this._setupTiltEffect(cardEl);
+      if (hp) this._cardCleanupFns.push(hp);
+      if (ag && isGame) this._cardCleanupFns.push(ag);
+      if (tl && isGame) this._cardCleanupFns.push(tl);
     }
 
     app.querySelector('.btn-like')?.addEventListener('click', () => this.handleSwipe('right'));
@@ -1682,19 +1692,46 @@ class App {
   }
 
   _setupHoverPreview(cardEl, card) {
-    if (card.type !== 'game' || card.source !== 'igdb') return null;
-    const trailers = card.trailers || [];
-    if (!trailers.length) return null;
-    const videoId = trailers[0].id;
-    if (!videoId) return null;
+    const isGame = card.type === 'game' || card.source === 'igdb';
+    const isTMDB = card.source === 'tmdb' && (card.type === 'movie' || card.type === 'tv');
+    if (!isGame && !isTMDB) return null;
+
+    let videoId = null;
+    if (isGame) {
+      const trailers = card.trailers || [];
+      if (!trailers.length) return null;
+      videoId = trailers[0].id;
+    }
+    if (!videoId && !isTMDB) return null;
+
     const cover = cardEl.querySelector('.card-cover');
     if (!cover) return null;
     let iframe = null;
     let hoverTimer = null;
     let isPlaying = false;
+    let trailerFetched = false;
+
+    const createIframe = (id) => {
+      const el = document.createElement('iframe');
+      el.className = 'card-trailer-iframe';
+      el.src = `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&controls=0&modestbranding=1&rel=0&showinfo=0`;
+      el.allow = 'autoplay; encrypted-media';
+      el.setAttribute('frameborder', '0');
+      el.setAttribute('pointer-events', 'none');
+      return el;
+    };
+
     const startPreview = () => {
-      hoverTimer = setTimeout(() => {
+      hoverTimer = setTimeout(async () => {
         if (isPlaying) return;
+        if (isTMDB && !videoId && !trailerFetched) {
+          trailerFetched = true;
+          try {
+            const videos = await getTMDBVideos(card.tmdb_id, card.type === 'tv' ? 'tv' : 'movie', this.lang);
+            if (videos.length) videoId = videos[0].id;
+          } catch { return; }
+        }
+        if (!videoId) return;
         isPlaying = true;
         iframe = document.createElement('iframe');
         iframe.className = 'game-preview-iframe';
@@ -2150,6 +2187,7 @@ class App {
             items.push({
               id: `tmdb-${m.id}`, tmdb_id: m.id, title: m.title || m.name,
               cover: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : '',
+              backdrop: m.backdrop_path ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` : '',
               year: parseInt((m.release_date || m.first_air_date || '').slice(0, 4)) || null,
               overview: m.overview, genres: m.genre_ids, source: 'tmdb',
               type: m.media_type || this.state.mediaType
