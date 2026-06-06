@@ -116,30 +116,22 @@ describe('Peek Overlay Dismissal', () => {
 
   // Clean up any leftover peek overlays between tests
   afterEach(() => {
-    document.querySelectorAll('.peek-overlay, .feedback-overlay').forEach(el => el.remove());
+    document.querySelectorAll('.peek-overlay, .feedback-overlay, .deep-dive-panel, .deep-dive-backdrop').forEach(el => el.remove());
   });
 
   describe('_setupLongPress (via App prototype)', () => {
     it('should not show peek if touch moves more than 10px before 400ms fires', () => {
       // Create a minimal mock App that has the required properties for _setupLongPress
       let peekCard = null;
+      let deepDiveOpened = false;
       const mockApp = {
         lang: 'en',
         _genreMap: {},
         swipeEngine: null,
-        _showPeekOverlay: (card) => {
-          peekCard = card;
-          // Simulate what the real _showPeekOverlay does (create overlay DOM)
-          const overlay = document.createElement('div');
-          overlay.className = 'peek-overlay';
-          overlay.innerHTML = `<div class="peek-card"><button data-action="peek-close">✕</button></div>`;
-          document.body.appendChild(overlay);
-          requestAnimationFrame(() => overlay.classList.add('open'));
-        }
+        _openDeepDive: () => { deepDiveOpened = true; }
       };
       const mockCard = { id: 'test-1', title: 'Test', genres: [28] };
 
-      // Directly call the prototype method with our mock App as `this`
       App.prototype._setupLongPress.call(mockApp, cardEl, mockCard);
 
       // Touchstart at 100,200
@@ -150,26 +142,24 @@ describe('Peek Overlay Dismissal', () => {
       // Wait past the 400ms timer
       return new Promise(resolve => {
         setTimeout(() => {
-          const overlay = document.querySelector('.peek-overlay');
-          assert.equal(overlay, null, 'Peek should not appear after moving >10px');
+          assert.equal(deepDiveOpened, false, 'Deep-dive should not open after moving >10px');
           resolve();
         }, 500);
       });
     });
 
-    it('should show peek after 400ms hold and dismiss on touchend', () => {
-      let peekCard = null;
+    it('should show deep-dive panel after 400ms hold', () => {
+      let deepDiveCard = null;
       const mockApp = {
         lang: 'en',
         _genreMap: {},
         swipeEngine: null,
-        _showPeekOverlay: (card) => {
-          peekCard = card;
-          const overlay = document.createElement('div');
-          overlay.className = 'peek-overlay';
-          overlay.innerHTML = `<div class="peek-card"><button data-action="peek-close">✕</button></div>`;
-          document.body.appendChild(overlay);
-          requestAnimationFrame(() => overlay.classList.add('open'));
+        state: { mediaType: 'movies' },
+        _openDeepDive: (card) => {
+          deepDiveCard = card;
+          const panel = document.createElement('div');
+          panel.className = 'deep-dive-panel open';
+          document.body.appendChild(panel);
         }
       };
       const mockCard = { id: 'test-1', title: 'Test', genres: [28] };
@@ -179,22 +169,17 @@ describe('Peek Overlay Dismissal', () => {
       // Hold finger still
       touchstart(cardEl, { x: 100, y: 200 });
 
-      // Wait for 400ms timer to fire and overlay to appear
+      // Wait for 400ms timer to fire and panel to appear
       return new Promise(resolve => {
         setTimeout(() => {
-          const overlay = document.querySelector('.peek-overlay');
-          assert.ok(overlay, 'Peek should appear after 400ms hold');
-          assert.ok(overlay.classList.contains('open'), 'Peek should be open');
-          assert.equal(peekCard, mockCard, 'Peek should be shown with the correct card');
+          const panel = document.querySelector('.deep-dive-panel');
+          assert.ok(panel, 'Deep-dive panel should appear after 400ms hold');
+          assert.ok(panel.classList.contains('open'), 'Panel should be open');
+          assert.equal(deepDiveCard, mockCard, 'Panel should be shown with the correct card');
 
-          // Now release
-          touchend(cardEl, { x: 100, y: 200 });
-
-          // After release, the peek should be dismissed
-          setTimeout(() => {
-            assert.equal(overlay.classList.contains('open'), false, 'Peek should be dismissed on release');
-            resolve();
-          }, 50);
+          // Cleanup
+          panel.remove();
+          resolve();
         }, 500);
       });
     });

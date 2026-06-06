@@ -45,7 +45,8 @@ function simulateSwipe(engine, opts = {}) {
   // Override with a simple mock that won't cause recursion
   global.performance.now = () => fakeTime;
 
-  engine._start({ clientX: fromX, clientY: fromY });
+  const preventDefault = () => {};
+  engine._start({ clientX: fromX, clientY: fromY, preventDefault });
 
   // Advance time and position through steps
   for (let i = 1; i <= steps; i++) {
@@ -53,7 +54,7 @@ function simulateSwipe(engine, opts = {}) {
     const x = fromX + (toX - fromX) * t;
     const y = fromY + (toY - fromY) * t;
     fakeTime = duration * t;
-    engine._move({ clientX: x, clientY: y });
+    engine._move({ clientX: x, clientY: y, preventDefault });
   }
 
   engine._end();
@@ -104,21 +105,24 @@ describe('SwipeEngine', () => {
       engine = new SwipeEngine(el, (dir) => { swipeDir = dir; });
     });
 
-    it('should detect a right swipe (dx > 100, positive dx)', () => {
+    it('should detect a right swipe (dx > 100, positive dx)', async () => {
       simulateSwipe(engine, { fromX: 100, toX: 300, duration: 200 });
       assert.equal(engine._didSwipe, true);
+      await new Promise(r => setTimeout(r, 350));
       assert.equal(swipeDir, 'right');
     });
 
-    it('should detect a left swipe (dx < -100)', () => {
+    it('should detect a left swipe (dx < -100)', async () => {
       simulateSwipe(engine, { fromX: 300, toX: 100, duration: 200 });
       assert.equal(engine._didSwipe, true);
+      await new Promise(r => setTimeout(r, 350));
       assert.equal(swipeDir, 'left');
     });
 
-    it('should detect an up swipe (dy < -80, negative dy)', () => {
+    it('should detect an up swipe (dy < -80, negative dy)', async () => {
       simulateSwipe(engine, { fromX: 100, fromY: 300, toX: 100, toY: 100, duration: 200 });
       assert.equal(engine._didSwipe, true);
+      await new Promise(r => setTimeout(r, 350));
       assert.equal(swipeDir, 'up');
     });
 
@@ -144,9 +148,10 @@ describe('SwipeEngine', () => {
       engine = new SwipeEngine(el, (dir) => { swipeDir = dir; });
     });
 
-    it('should trigger on a fast flick at just 30px', () => {
+    it('should trigger on a fast flick at just 30px', async () => {
       simulateSwipe(engine, { fromX: 100, toX: 145, duration: 20, steps: 3 });
       assert.equal(engine._didSwipe, true);
+      await new Promise(r => setTimeout(r, 350));
       assert.equal(swipeDir, 'right');
     });
 
@@ -155,9 +160,10 @@ describe('SwipeEngine', () => {
       assert.equal(engine._didSwipe, false);
     });
 
-    it('should detect fast up flick at 20px', () => {
+    it('should detect fast up flick at 20px', async () => {
       simulateSwipe(engine, { fromX: 100, fromY: 200, toX: 100, toY: 170, duration: 20, steps: 3 });
       assert.equal(engine._didSwipe, true);
+      await new Promise(r => setTimeout(r, 350));
       assert.equal(swipeDir, 'up');
     });
   });
@@ -198,13 +204,13 @@ describe('SwipeEngine', () => {
     it('should have rotation proportionally scaling with distance', () => {
       // Use a diagonal swipe (both dx and dy) to produce a non-zero angle
       // At 50px dx + 50px dy: distFactor = 0.5, angle = atan2(50, 50) = ~0.785 rad
-      engine._start({ clientX: 100, clientY: 200 });
-      engine._move({ clientX: 150, clientY: 150 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
+      engine._move({ clientX: 150, clientY: 150, preventDefault() {} });
       const transform50 = el.style.transform;
 
       // At 150px dx + 150px dy: distFactor = 1.0, angle = atan2(150, 150) = ~0.785 rad
-      engine._start({ clientX: 100, clientY: 200 });
-      engine._move({ clientX: 250, clientY: 50 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
+      engine._move({ clientX: 250, clientY: 50, preventDefault() {} });
       const transform150 = el.style.transform;
 
       assert.ok(transform50.includes('rotate('));
@@ -218,8 +224,8 @@ describe('SwipeEngine', () => {
     });
 
     it('should have zero rotation at zero drag', () => {
-      engine._start({ clientX: 100, clientY: 200 });
-      engine._move({ clientX: 100, clientY: 200 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
+      engine._move({ clientX: 100, clientY: 200, preventDefault() {} });
       const transform = el.style.transform;
       const rot = parseFloat(transform.match(/rotate\(([-\d.]+)/)[1]);
       assert.equal(rot, 0, 'no drag should produce zero rotation');
@@ -234,12 +240,12 @@ describe('SwipeEngine', () => {
 
     it('should be true during a swipe', () => {
       assert.equal(engine.isSwiping, false);
-      engine._start({ clientX: 100, clientY: 200 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
       assert.equal(engine.isSwiping, true);
     });
 
     it('should be false after swipe ends', () => {
-      engine._start({ clientX: 100, clientY: 200 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
       engine._end();
       assert.equal(engine.isSwiping, false);
     });
@@ -253,12 +259,12 @@ describe('SwipeEngine', () => {
     });
 
     it('should decrease opacity as drag distance increases', () => {
-      engine._start({ clientX: 100, clientY: 200 });
-      engine._move({ clientX: 250, clientY: 200 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
+      engine._move({ clientX: 250, clientY: 200, preventDefault() {} });
       const op1 = parseFloat(el.style.opacity);
 
-      engine._start({ clientX: 100, clientY: 200 });
-      engine._move({ clientX: 350, clientY: 200 });
+      engine._start({ clientX: 100, clientY: 200, preventDefault() {} });
+      engine._move({ clientX: 350, clientY: 200, preventDefault() {} });
       const op2 = parseFloat(el.style.opacity);
 
       assert.ok(op2 < op1, 'more drag should produce lower opacity');

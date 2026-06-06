@@ -136,6 +136,7 @@ def _get_igdb_token():
 
 # SSRF whitelist
 _OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find)/')
+_OL_BASE = 'https://openlibrary.org'
 _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
 _IGDB_BODY_RE = re.compile(r'^(fields|search|where|sort|limit|offset)')
@@ -190,6 +191,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/gbooks'):   return self._gbooks(p)
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
         if p.startswith('/proxy/steam/'):   return self._steam(p[13:])
+        if p.startswith('/proxy/openlibrary/'): return self._openlibrary(p[18:])
         super().do_GET()
 
     def do_POST(self):
@@ -409,6 +411,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             log.warning('AI concierge error: %s', e)
             return self._json({'response': '', 'fallback': True})
+
+    # ---- Open Library proxy (for first-page excerpts) ----
+    def _openlibrary(self, path):
+        """Proxy requests to Open Library API (no auth needed, just for CORS)."""
+        path = path.lstrip('/')
+        if not re.match(r'^works/[A-Za-z0-9]+\.json$', path):
+            return self._json({'error': 'Invalid Open Library path', 'status': 400}, 400)
+        data = fetch(f'{_OL_BASE}/{path}', ttl=86400)
+        if 'status' in data and isinstance(data['status'], int) and data['status'] >= 400:
+            return self._json(data, data['status'])
+        self._json(data)
 
     # ---- Steam Store API proxy ----
     def _steam(self, path):

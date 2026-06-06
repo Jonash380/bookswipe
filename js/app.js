@@ -4,6 +4,7 @@ import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
 import { fetchBooks, fetchUpcomingBooks, fetchUpcomingMedia, mapTmdbResult } from './api.js';
 import { SwipeEngine } from './swipe.js';
+import { DeepDivePanel } from './deep-dive.js';
 import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
 import { getTMDBDetails, searchTMDB, getTMDBVideos } from './tmdb.js';
@@ -1235,7 +1236,11 @@ class App {
     if (cardEl) {
       if (this._cardCleanupFns) this._cardCleanupFns.forEach(fn => fn());
       this._cardCleanupFns = [];
-      this.swipeEngine = new SwipeEngine(cardEl, dir => this.handleSwipe(dir));
+      this.swipeEngine = new SwipeEngine(
+        cardEl,
+        dir => this.handleSwipe(dir),
+        () => this._openDeepDive(card)
+      );
       const hp = this._setupHoverPreview(cardEl, card);
       const ag = this._setupAmbientGlow(cardEl, card);
       const tl = this._setupTiltEffect(cardEl);
@@ -1326,7 +1331,7 @@ class App {
     });
     this._bindNav(app);
 
-    // Long-press to show peek overlay
+    // Long-press to show deep-dive panel (replaces peek overlay)
     this._setupLongPress(cardEl, card);
   }
 
@@ -1339,15 +1344,14 @@ class App {
 
     const startPress = (e) => {
       if (this.swipeEngine?.isSwiping) return;
-      if (document.querySelector('.peek-overlay')) return;
+      if (document.querySelector('.deep-dive-panel')) return;
       const touch = e.touches ? e.touches[0] : e;
       startX = touch.clientX;
       startY = touch.clientY;
       peekShown = false;
       pressTimer = setTimeout(() => {
         peekShown = true;
-        this._showPeekOverlay(card);
-        // Reset timer so we don't also trigger the feedback modal
+        this._openDeepDive(card);
         clearTimeout(pressTimer);
         pressTimer = null;
       }, 400);
@@ -1358,32 +1362,15 @@ class App {
         clearTimeout(pressTimer);
         pressTimer = null;
       }
-      // If peek is shown, dismiss it on release
-      if (peekShown) {
-        peekShown = false;
-        const overlay = document.querySelector('.peek-overlay');
-        if (overlay) {
-          overlay.classList.remove('open');
-          setTimeout(() => overlay.remove(), 300);
-        }
-      }
     };
 
     const moveCancel = (e) => {
-      if (!pressTimer && !peekShown) return;
+      if (!pressTimer) return;
       const touch = e.touches ? e.touches[0] : e;
       const dx = Math.abs(touch.clientX - startX);
       const dy = Math.abs(touch.clientY - startY);
       if (dx > 10 || dy > 10) {
         if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-        if (peekShown) {
-          peekShown = false;
-          const overlay = document.querySelector('.peek-overlay');
-          if (overlay) {
-            overlay.classList.remove('open');
-            setTimeout(() => overlay.remove(), 300);
-          }
-        }
       }
     };
 
@@ -1395,121 +1382,20 @@ class App {
     cardEl.addEventListener('mouseleave', cancelPress);
   }
 
-  _showPeekOverlay(card) {
-    // Remove any existing peek
-    const existing = document.querySelector('.peek-overlay');
-    if (existing) existing.remove();
-
-    const isGame = card.type === 'game' || card.source === 'igdb';
-    const de = this.lang === 'de';
-
-    // Build summary from overview (first 2 sentences)
-    let summary = '';
-    if (card.overview) {
-      const parts = card.overview.split(/(?<=[.!?])\s+/);
-      summary = parts.slice(0, 2).join(' ');
-    }
-
-    // Build DNA tags / key themes
-    const dna = card.mediaDNA || {};
-    const themes = [];
-    if (dna.tropes) themes.push(...dna.tropes.slice(0, 2));
-    if (dna.pacing) themes.push(...dna.pacing.slice(0, 1));
-    if (dna.aesthetic) themes.push(...dna.aesthetic.slice(0, 1));
-
-    // Use card DNA tags as fallback
-    const dnaTags = themes.length ? themes : this._getCardDNATags(card);
-
-    const genreStr = isGame
-      ? (card.genres || []).join(', ')
-      : (card.genres || []).map(g => typeof g === 'string' ? g : (this._genreMap[g] || g)).join(', ');
-
-    const overlay = document.createElement('div');
-    overlay.className = 'peek-overlay';
-    overlay.innerHTML = `
-      <div class="peek-card">
-        <div class="peek-header">
-          <div class="peek-title-row">
-            <h3 class="peek-title">${escapeHTML(card.title)}</h3>
-            <button class="peek-close" data-action="peek-close" aria-label="Close">✕</button>
-          </div>
-          <div class="peek-meta">
-            ${card.year ? `<span class="peek-year">${card.year}</span>` : ''}
-            ${card.rating ? `<span class="peek-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
-            ${genreStr ? `<span class="peek-genres">${(card.genres || []).slice(0, 4).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="peek-genre-tag">${icon} ${escapeHTML(name)}</span>`; }).join('')}</span>` : ''}
-          </div>
-        </div>
-        ${summary ? `<p class="peek-summary">${escapeHTML(summary)}</p>` : ''}
-        ${dnaTags.length ? `
-          <div class="peek-tags">
-            ${dnaTags.slice(0, 4).map(t => `<span class="peek-tag">${escapeHTML(t)}</span>`).join('')}
-          </div>
-        ` : ''}
-        ${this._renderPeekMatchDNA(card)}
-        <div class="peek-actions">
-          <button class="btn btn-sm btn-nope peek-nope" data-action="peek-nope" title="${this.tr.nope}">✕ ${de ? 'Nein' : 'Nope'}</button>
-          <button class="btn btn-sm peek-info" data-action="peek-info" title="${this.tr.whySeeing}">ℹ️ ${de ? 'Details' : 'Details'}</button>
-          <button class="btn btn-sm peek-like" data-action="peek-like" title="${this.tr.like}">♥ ${de ? 'Mag ich' : 'Like'}</button>
-        </div>
-        <button class="btn btn-sm peek-why-not" data-action="peek-why-not" title="${de ? 'Warum nicht?' : 'Why not?'}">💬 ${de ? 'Warum nicht?' : 'Why not?'}</button>
-      </div>`;
-
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('open'));
-
-    // Dismiss on backdrop click
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay || e.target.closest('[data-action="peek-close"]')) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-      }
-    });
-
-    // Like button
-    overlay.querySelector('[data-action="peek-like"]')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      overlay.classList.remove('open');
-      setTimeout(() => { overlay.remove(); this.handleSwipe('right'); }, 300);
-    });
-
-    // Nope button
-    overlay.querySelector('[data-action="peek-nope"]')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      overlay.classList.remove('open');
-      setTimeout(() => { overlay.remove(); this.handleSwipe('left'); }, 300);
-    });
-
-    // Info button — opens full card modal
-    overlay.querySelector('[data-action="peek-info"]')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      overlay.classList.remove('open');
-      setTimeout(() => {
-        overlay.remove();
-        const app = document.getElementById('app');
-        this._showCardModal(card, app);
-      }, 300);
-    });
-
-    // Why not? button — opens explicit feedback modal
-    overlay.querySelector('[data-action="peek-why-not"]')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      overlay.classList.remove('open');
-      setTimeout(() => {
-        overlay.remove();
-        this._showFeedbackModal(card);
-      }, 300);
-    });
-
-    // Escape key dismiss
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
+  _openDeepDive(card) {
+    if (!card) return;
+    if (document.querySelector('.deep-dive-panel')) return;
+    new DeepDivePanel({
+      card,
+      mediaType: this.state.mediaType,
+      lang: this.lang,
+      genreMap: this._genreMap,
+      onSave: () => this.handleSwipe('right'),
+      onSkip: () => this.handleSwipe('left'),
+      onDismiss: () => {},
+    }).open();
   }
+
 
   // ===== EXPLICIT FEEDBACK MODAL (triggered from peek "Why not?" button) =====
   _showFeedbackModal(card) {
@@ -2532,50 +2418,6 @@ class App {
       </div>`;
   }
 
-  // ===== COMPACT MATCH DNA FOR PEEK OVERLAY =====
-  _renderPeekMatchDNA(card) {
-    try {
-      const dna = this.recommender.generateMatchDNA(card);
-      if (!dna || !dna.dna_breakdown || !dna.dna_breakdown.length) return '';
-
-      const pct = dna.overall_match_percentage;
-      let color = '#ef4444';
-      let label = this.lang === 'de' ? 'Schlecht' : 'Poor';
-      if (pct >= 80) { color = '#22c55e'; label = this.lang === 'de' ? 'Perfekt' : 'Perfect'; }
-      else if (pct >= 60) { color = '#4ecdc4'; label = this.lang === 'de' ? 'Gut' : 'Good'; }
-      else if (pct >= 40) { color = '#f59e0b'; label = this.lang === 'de' ? 'Okay' : 'Okay'; }
-
-      const top = dna.dna_breakdown.slice(0, 2);
-
-      return `
-        <div class="peek-dna-section">
-          <div class="peek-dna-header">
-            <span class="peek-dna-label">🧬 ${this.lang === 'de' ? 'Trefferquote' : 'Match'}</span>
-            <span class="peek-dna-pct" style="color:${color}">${pct}% ${escapeHTML(label)}</span>
-          </div>
-          ${dna.hook ? `<p class="peek-dna-hook">${escapeHTML(dna.hook)}</p>` : ''}
-          <div class="peek-dna-bars">
-            ${top.map(b => {
-              const barColor = b.score >= 80 ? '#22c55e' : b.score >= 60 ? '#4ecdc4' : b.score >= 40 ? '#f59e0b' : '#ef4444';
-              return `
-                <div class="peek-dna-bar">
-                  <div class="peek-dna-bar-label">
-                    <span>${escapeHTML(b.category)}</span>
-                    <span class="peek-dna-bar-score">${b.score}%</span>
-                  </div>
-                  <div class="peek-dna-bar-track">
-                    <div class="peek-dna-bar-fill" style="width:${b.score}%;background:${barColor}"></div>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        </div>`;
-    } catch (e) {
-      console.warn('Peek DNA error:', e);
-      return '';
-    }
-  }
 
   // ===== MATCH DNA VISUAL BREAKDOWN =====
   _renderMatchDNA(card) {

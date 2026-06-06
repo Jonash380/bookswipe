@@ -223,6 +223,43 @@ export async function fetchUpcomingMedia(mediaType, selectedGenres, lang, radarD
 }
 
 /**
+ * Fetch the first paragraph/excerpt of a book from Open Library.
+ * Returns { text, source } where source indicates provenance.
+ */
+export async function fetchFirstParagraph(book) {
+  try {
+    // Extract Open Library work ID from various ID formats
+    const id = book.id || '';
+    let workId = '';
+    if (id.startsWith('ol-')) workId = id.replace('ol-', '');
+    else if (id.startsWith('OL')) workId = id;
+    else if (book.openLibraryId) workId = book.openLibraryId;
+    else if (book.sourceId && book.sourceId.startsWith('OL')) workId = book.sourceId;
+
+    if (!workId) return { text: '', source: '' };
+
+    // Normalize: strip leading slash and ensure works/ prefix
+    const cleanId = workId.replace(/^\//, '').replace(/^works\//, '');
+    const r = await fetch(`/proxy/openlibrary/works/${cleanId}.json`);
+    if (!r.ok) return { text: '', source: '' };
+    const data = await r.json();
+
+    // Prefer first_sentence, fall back to excerpt, then description
+    const fs = data.first_sentence;
+    const firstSentence = typeof fs === 'string' ? fs : fs?.value || '';
+    const excerpt = data.excerpts?.[0]?.text || '';
+    const desc = typeof data.description === 'string'
+      ? data.description
+      : data.description?.value || '';
+
+    const text = firstSentence || excerpt || desc;
+    return { text, source: firstSentence ? 'openlibrary:first_sentence' : excerpt ? 'openlibrary:excerpt' : desc ? 'openlibrary:description' : '' };
+  } catch {
+    return { text: '', source: '' };
+  }
+}
+
+/**
  * Build retailer/search links for a book's editions.
  * Returns an array of { name, url, icon, source } objects.
  */

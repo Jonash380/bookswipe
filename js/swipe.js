@@ -1,8 +1,10 @@
 export class SwipeEngine {
-  constructor(el, onSwipe) {
+  constructor(el, onSwipe, onExpand) {
     this.el = el;
     this.onSwipe = onSwipe;
+    this.onExpand = onExpand || null;
     this.startX = 0; this.startY = 0;
+    this.startYPct = 0; // Y position as % of element height
     this.dx = 0; this.dy = 0;
     this.lastX = 0; this.lastY = 0;
     this.lastTime = 0;
@@ -10,6 +12,8 @@ export class SwipeEngine {
     this.velocityY = 0;
     this.swiping = false;
     this._didSwipe = false;
+    this._expanded = false; // true once expand gesture activates
+    this._resisting = false; // true while dragging up in bottom zone before threshold
     this._handlers = {
       touchstart: e => this._start(e),
       touchmove: e => this._move(e),
@@ -30,8 +34,13 @@ export class SwipeEngine {
   _start(e) {
     this.swiping = true;
     this._didSwipe = false;
+    this._expanded = false;
+    this._resisting = false;
     this.startX = e.clientX || e.touches?.[0]?.clientX || 0;
     this.startY = e.clientY || e.touches?.[0]?.clientY || 0;
+    // Compute Y position as percentage of element height (0 = top, 1 = bottom)
+    const rect = this.el.getBoundingClientRect();
+    this.startYPct = rect.height > 0 ? (this.startY - rect.top) / rect.height : 0.5;
     this.lastX = this.startX;
     this.lastY = this.startY;
     this.lastTime = performance.now();
@@ -61,6 +70,43 @@ export class SwipeEngine {
     this.lastY = y;
     this.lastTime = now;
 
+    // Bottom-zone expand resistance: progressive scale-down and blur
+    if (this.onExpand && this.startYPct > 0.7 && this.dy < -5 && !this._expanded) {
+      const expandThreshold = 80;
+      const progress = Math.min(Math.abs(this.dy) / expandThreshold, 1);
+      const eased = progress * progress; // ease-in for natural resistance build-up
+      const scale = 1 - eased * 0.1;    // 1.0 → 0.9
+      const blur = eased * 8;            // 0 → 8px
+      this.el.style.transform = `scale(${scale})`;
+      this.el.style.filter = blur > 0.5 ? `blur(${blur}px)` : '';
+      this.el.style.opacity = String(Math.max(0.8, 1 - eased * 0.2));
+      this._resisting = true;
+
+      if (progress >= 1) {
+        // Threshold reached — snap to expand and fire
+        this._expanded = true;
+        this._resisting = false;
+        this.swiping = false;
+        this.el.classList.remove('dragging');
+        this.el.style.transition = 'transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease';
+        this.el.style.transform = 'scale(0.88)';
+        this.el.style.filter = 'blur(12px)';
+        this.el.style.opacity = '0.7';
+        const sx = this.startX, sy = this.startY;
+        setTimeout(() => {
+          this.el.style.transition = '';
+          this.el.style.transform = '';
+          this.el.style.filter = '';
+          this.el.style.opacity = '';
+          this.onExpand(sx, sy);
+        }, 200);
+      }
+      return;
+    }
+
+    // If expand was activated, don't apply card transforms
+    if (this._expanded) return;
+
     const angle = Math.atan2(this.dy, this.dx);
     const distFactor = Math.min(Math.abs(this.dx) / 100, 1);
     const rotation = (angle * 180 / Math.PI) * 0.12 * distFactor;
@@ -82,6 +128,20 @@ export class SwipeEngine {
     if (!this.swiping) return;
     this.swiping = false;
     this.el.classList.remove('dragging');
+
+    // If we were in the resistance phase but didn't reach the expand threshold, bounce back
+    if (this._resisting) {
+      this._resisting = false;
+      this.el.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.4s ease, opacity 0.4s ease';
+      this.el.style.transform = '';
+      this.el.style.filter = '';
+      this.el.style.opacity = '';
+      this.dx = 0; this.dy = 0;
+      this.velocityX = 0; this.velocityY = 0;
+      setTimeout(() => { if (this.el) this.el.style.transition = ''; }, 500);
+      return;
+    }
+
     const absDx = Math.abs(this.dx);
     const absDy = Math.abs(this.dy);
     const absVx = Math.abs(this.velocityX);
