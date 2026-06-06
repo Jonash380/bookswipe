@@ -3,7 +3,23 @@ import { mapTMDBTags, computeVibeScores } from './tag_mapper.js';
 import { GAME_GENRE_NAME_MAP } from './games.js';
 
 const W = { genre:15, mood:20, era:-30, trope:10, pacing:8, aesthetic:7, warning:-5, boost:8, block:-40, decay:0.95,
-  platform:25, playtime:12, mechanic:10, multiplayer:8, theme:10 };
+  platform:25, playtime:12, mechanic:10, multiplayer:8, theme:10, vibe:6 };
+
+// Shared stop words for description similarity (EN + common DE)
+const STOP_WORDS = new Set([
+  'the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was',
+  'were','be','been','being','have','has','had','do','does','did','will','would','could','should',
+  'may','might','shall','can','this','that','these','those','it','its','he','she','they','them','their',
+  'his','her','my','your','our','who','which','what','when','where','how','not','no','nor','so','if',
+  'than','too','very','just','about','into','through','during','before','after','above','below','between',
+  'out','up','down','off','over','under','again','further','then','once','all','each','every','both',
+  'few','more','most','other','some','such','only','own','same','also','back','even','still','well',
+  'much','many','new','old','first','last','long','great','little','one','two','three','four','five',
+  'der','die','das','ein','eine','und','oder','aber','in','auf','mit','von','zu','für','ist','sind',
+  'war','hat','haben','werden','wird','nicht','sich','auch','noch','wie','aber','denn','nur','schon'
+]);
+
+const WORD_RE = /[^a-zäöüßàáâãèéêìíîòóôùúûç]+/;
 
 // Bayesian prior — prevents overfitting when user has few browses
 const BAYES = { priorMean: 50, priorStrength: 5, minSamples: 3 };
@@ -42,6 +58,13 @@ export class Recommender {
     } else {
       score = this._scoreMedia(item, score, s);
     }
+
+    // Description similarity (TF-IDF style taste vector)
+    score += this._scoreDescriptionSimilarity(item);
+    // Recent action bias (HMM-lite: boost items matching last few swipes)
+    score += this._scoreRecentBias(item);
+    // Bayesian weighted rating (vote_average + vote_count)
+    score += this._bayesianRating(item);
 
     // Bayesian shrinkage: pull score toward prior when we have few samples
     // This prevents wild recommendations on cold start
@@ -110,6 +133,8 @@ export class Recommender {
       });
       if (blocked.length) score += W.block;
     }
+
+    score += this._scoreVibeMatch(item, s);
 
     return score;
   }
@@ -182,7 +207,201 @@ export class Recommender {
     if (item.rating && item.rating >= 85) score += 5;
     if (item.rating && item.rating < 60) score -= 5;
 
+    score += this._scoreVibeMatch(item, s);
+
     return score;
+  }
+
+  /**
+   * Build a taste keyword vector from descriptions of liked items.
+   * Returns a Map<word, weight> where weight reflects how often the word
+   * appears across liked items, weighted by recency.
+   */
+  _buildTasteVector() {
+    if (this._tasteVec) return this._tasteVec;
+    const vec = new Map();
+    const history = this.app.history || [];
+    const likes = history.filter(h => h.action === 'like').slice(0, 30);
+    if (likes.length < 2) { this._tasteVec = vec; return vec; }
+    likes.forEach((item, i) => {
+      const desc = item.overview || item.description || '';
+      if (desc.length < 15) return;
+      const recencyWeight = 1 + (likes.length - i) / likes.length;
+      const words = desc.toLowerCase().split(WORD_RE).filter(w => w.length > 2 && !STOP_WORDS.has(w));
+      for (const w of words) vec.set(w, (vec.get(w) || 0) + recencyWeight);
+    });
+    this._tasteVec = vec;
+    return vec;
+  }
+
+  /**
+   * Score how well an item's description matches the user's taste vector.
+   * Uses a lightweight cosine-similarity-inspired approach (dot product of
+   * shared term weights). Returns a small bonus (±5 max).
+   */
+  _scoreDescriptionSimilarity(item) {
+    const desc = item.overview || item.description || '';
+    if (desc.length < 15) return 0;
+    const vec = this._buildTasteVector();
+    if (vec.size === 0) return 0;
+    const words = desc.toLowerCase().split(WORD_RE).filter(w => w.length > 2 && !STOP_WORDS.has(w));
+    let dotProduct = 0;
+    let matched = 0;
+    for (const w of words) {
+      const weight = vec.get(w);
+      if (weight) { dotProduct += weight; matched++; }
+    }
+    if (matched === 0) return 0;
+    // Normalize: scale down by total taste vector magnitude to get a similarity ratio
+    const vecMagnitude = [...vec.values()].reduce((s, v) => s + v * v, 0);
+    const similarity = dotProduct / (Math.sqrt(vecMagnitude) + 1);
+    return Math.min(5, Math.max(0, similarity));
+  }
+
+  /**
+   * Recent action bias (HMM-lite).
+   * Boosts items that share DNA tags with the user's last few swipes,
+   * with exponential decay so recent actions matter more.
+   * Returns a small bonus (±4 max).
+   */
+  _scoreRecentBias(item) {
+    const history = this.app.history || [];
+    if (history.length < 2) return 0;
+    const recent = history.slice(0, 6);
+    const dna = item.mediaDNA || {};
+    const itemTags = new Set([
+      ...(dna.tropes || []),
+      ...(dna.pacing || []),
+      ...(dna.aesthetic || [])
+    ]);
+    if (itemTags.size === 0) return 0;
+    let bonus = 0;
+    const decay = 0.7;
+    recent.forEach((h, i) => {
+      const weight = Math.pow(decay, i);
+      const hDna = h.mediaDNA || {};
+      const hTags = new Set([
+        ...(hDna.tropes || []),
+        ...(hDna.pacing || []),
+        ...(hDna.aesthetic || [])
+      ]);
+      let overlap = 0;
+      for (const t of itemTags) { if (hTags.has(t)) overlap++; }
+      if (overlap > 0) {
+        bonus += (h.action === 'like' ? 1 : -0.5) * overlap * weight;
+      }
+    });
+    return Math.min(4, Math.max(-4, bonus));
+  }
+
+  /**
+   * Bayesian weighted rating for items with community ratings.
+   * Uses the IMDB/TMDB formula: (v/(v+m)) * R + (m/(v+m)) * C
+   * where R = item rating, v = vote count, m = min votes, C = global avg.
+   * Returns a small bonus (−3 to +4).
+   */
+  _bayesianRating(item) {
+    const R = item.rating || item.vote_average;
+    const v = item.vote_count;
+    if (!R || !v) return 0;
+    const C = 6.5;   // global average (TMDB ~6.5)
+    const m = 50;     // minimum votes threshold
+    const weighted = (v / (v + m)) * R + (m / (v + m)) * C;
+    // Map weighted rating to a small score bonus
+    if (weighted >= 8.0) return 4;
+    if (weighted >= 7.0) return 2;
+    if (weighted >= 6.0) return 1;
+    if (weighted >= 5.0) return 0;
+    return -3;
+  }
+
+  /**
+   * Score how well an item matches the user's vibe matrix preferences.
+   * The vibe matrix has three axes (0-100, default 50):
+   *   - vibePacing: 0 = slow/atmospheric, 100 = fast/adrenaline
+   *   - vibeTone:   0 = dark/gritty,       100 = light/comforting
+   *   - vibeComplex: 0 = popcorn fun,       100 = mind-bending/deep
+   *
+   * Returns a small score adjustment (±W.vibe per axis match).
+   */
+  _scoreVibeMatch(item, s) {
+    const dna = item.mediaDNA || {};
+    const pacing = dna.pacing || [];
+    const aesthetics = dna.aesthetic || [];
+    const tropes = dna.tropes || [];
+    const tags = (item.tags || []).map(t => t.toLowerCase());
+    let bonus = 0;
+
+    // ---- Pacing axis (vibePacing: 0=slow, 100=fast) ----
+    // Only apply when user has meaningfully moved the slider away from neutral
+    if (s.vibePacing !== undefined && s.vibePacing !== 50) {
+      const pacingBias = (s.vibePacing - 50) / 50; // -1 to +1
+      const fastPacing = ['relentless', 'fast_paced', 'ticking_clock', 'roller_coaster'];
+      const slowPacing = ['slow_burn', 'meditative', 'slow_start'];
+
+      let pacingSignal = 0;
+      for (const p of pacing) {
+        if (fastPacing.includes(p)) pacingSignal += 1;
+        if (slowPacing.includes(p)) pacingSignal -= 1;
+      }
+      // Also check tags for pacing signals
+      if (tags.includes('intense') || tags.includes('fast-paced') || tags.includes('action')) pacingSignal += 0.5;
+      if (tags.includes('atmospheric') || tags.includes('slow') || tags.includes('contemplative')) pacingSignal -= 0.5;
+
+      // Match: positive pacingSignal + positive bias = good, negative + negative = good
+      if (pacingSignal !== 0) {
+        const match = pacingBias * Math.sign(pacingSignal);
+        if (match > 0) bonus += W.vibe * match;
+      }
+    }
+
+    // ---- Tone axis (vibeTone: 0=dark/gritty, 100=light/comforting) ----
+    if (s.vibeTone !== undefined && s.vibeTone !== 50) {
+      const toneBias = (s.vibeTone - 50) / 50; // -1 to +1
+      const darkAesthetics = ['neon_noir', 'gritty_realism', 'brutalist', 'high_contrast'];
+      const lightAesthetics = ['cottagecore', 'pastel_dream', 'lo_fi', 'minimalist'];
+
+      let toneSignal = 0;
+      for (const a of aesthetics) {
+        if (darkAesthetics.includes(a)) toneSignal -= 1;
+        if (lightAesthetics.includes(a)) toneSignal += 1;
+      }
+      // Check tags for tone signals
+      if (tags.includes('dark') || tags.includes('gritty') || tags.includes('noir')) toneSignal -= 0.5;
+      if (tags.includes('cozy') || tags.includes('wholesome') || tags.includes('light') || tags.includes('gentle')) toneSignal += 0.5;
+
+      if (toneSignal !== 0) {
+        const match = toneBias * Math.sign(toneSignal);
+        if (match > 0) bonus += W.vibe * match;
+      }
+    }
+
+    // ---- Complexity axis (vibeComplex: 0=popcorn, 100=deep) ----
+    if (s.vibeComplex !== undefined && s.vibeComplex !== 50) {
+      const complexBias = (s.vibeComplex - 50) / 50; // -1 to +1
+      const deepTropes = ['mystery_box', 'time_loop', 'non_linear'];
+      const deepAesthetics = ['neon_noir', 'minimalist', 'brutalist'];
+      const simpleTropes = ['underdog', 'chosen_one', 'found_family'];
+
+      let complexSignal = 0;
+      for (const t of tropes) {
+        if (deepTropes.includes(t)) complexSignal += 1;
+        if (simpleTropes.includes(t)) complexSignal -= 0.5;
+      }
+      for (const a of aesthetics) {
+        if (deepAesthetics.includes(a)) complexSignal += 0.5;
+      }
+      // Check tags for complexity signals
+      if (tags.includes('mind-bending') || tags.includes('complex') || tags.includes('cerebral')) complexSignal += 1;
+      if (tags.includes('fun') || tags.includes('light-hearted') || tags.includes('feel-good')) complexSignal -= 0.5;
+
+      if (complexSignal !== 0) {
+        const match = complexBias * Math.sign(complexSignal);
+        if (match > 0) bonus += W.vibe * match;
+      }
+    }
+
+    return bonus;
   }
 
   _computeWarningPenalty(warnings) {
@@ -210,6 +429,7 @@ export class Recommender {
     this._saveProfile();
     this._applyDecay();
     this.cache.clear();
+    this._tasteVec = null;
   }
 
   _updateEntityWeights(item, delta) {
@@ -703,6 +923,50 @@ export class Recommender {
       });
     }
 
+    // ---- 5. Description Similarity ----
+    const descSim = this._scoreDescriptionSimilarity(item);
+    if (descSim > 0) {
+      const descScore = Math.round(50 + descSim * 10);
+      const descReason = de
+        ? `Beschreibung aehnlich deinem Geschmack (+${descSim.toFixed(1)})`
+        : `Description similar to your taste (+${descSim.toFixed(1)})`;
+      breakdown.push({
+        category: de ? 'Beschreibung' : 'Description',
+        score: descScore,
+        reason: descReason,
+      });
+    }
+
+    // ---- 6. Recent Bias ----
+    const recentBias = this._scoreRecentBias(item);
+    if (recentBias !== 0) {
+      const recentScore = Math.round(50 + recentBias * 6);
+      const recentReason = recentBias > 0
+        ? (de ? `Aehnelt deinen letzten Swipes (+${recentBias.toFixed(1)})` : `Matches recent swipes (+${recentBias.toFixed(1)})`)
+        : (de ? `Weicht von letzten Swipes ab (${recentBias.toFixed(1)})` : `Differs from recent swipes (${recentBias.toFixed(1)})`);
+      breakdown.push({
+        category: de ? 'Kuerzliche Aktivitaet' : 'Recent Activity',
+        score: recentScore,
+        reason: recentReason,
+      });
+    }
+
+    // ---- 7. Bayesian Rating ----
+    const bayesRating = this._bayesianRating(item);
+    if (bayesRating !== 0) {
+      const bayesScore = Math.round(50 + bayesRating * 8);
+      const rating = item.rating || item.vote_average || 0;
+      const votes = item.vote_count || 0;
+      const bayesReason = bayesRating > 0
+        ? (de ? `Stark bewertet: ${rating.toFixed(1)} Sterne (${votes} Stimmen)` : `Well rated: ${rating.toFixed(1)} stars (${votes} votes)`)
+        : (de ? `Wenig oder niedrig bewertet (${votes} Stimmen)` : `Low or few ratings (${votes} votes)`);
+      breakdown.push({
+        category: de ? 'Bewertung' : 'Rating',
+        score: bayesScore,
+        reason: bayesReason,
+      });
+    }
+
     // Limit to 4 categories max, prioritizing safety info
     // Priority order: Genre > Content/Warnings > Mood > Story > Pacing > Length > Era > Platform
     while (breakdown.length > 4) {
@@ -714,7 +978,7 @@ export class Recommender {
         'Tempo', 'Pacing',
         'Länge', 'Length',
         'Ära', 'Era',
-        'Plattform', 'Platform',
+        'Beschreibung', 'Description', 'Kuerzliche Aktivitaet', 'Recent Activity', 'Bewertung', 'Rating', 'Plattform', 'Platform',
       ];
       let worstIdx = 0;
       let worstPrio = -1;
@@ -737,6 +1001,9 @@ export class Recommender {
       'Content Notes': 2, 'Warnhinweise': 2,
       'Era': 1, 'Ära': 1,
       'Platform': 1, 'Plattform': 1,
+      'Description': 1, 'Beschreibung': 1,
+      'Recent Activity': 1, 'Kürzliche Aktivität': 1,
+      'Rating': 2, 'Bewertung': 2,
     };
     breakdown.forEach(b => {
       const w = weights[b.category] || 1;
@@ -1759,5 +2026,53 @@ export class Recommender {
     return parts.join(' ');
   }
 
-  clear() { this.cache.clear(); }
+  /**
+   * Re-score and re-sort remaining cards in the queue after a profile update.
+   * Called after swipe to reflect newly learned preferences.
+   * @param {Array} cards - The full currentCards array.
+   * @param {number} startIndex - Index of the next unswiped card.
+   * @param {string} [experimentGroup] - 'treatment' for MMR diversity, 'control' for random serendipity.
+   * @returns {Array} New cards array with already-swiped cards preserved and remaining re-sorted.
+   */
+  rescoreQueue(cards, startIndex, experimentGroup) {
+    if (!cards || startIndex >= cards.length) return cards;
+
+    // Split: keep already-swiped cards as-is, re-score the rest
+    const swiped = cards.slice(0, startIndex);
+    const remaining = cards.slice(startIndex);
+
+    // Re-score each remaining card with the updated profile
+    const rescored = remaining.map(card => {
+      // Clear cached score so score() recalculates with fresh weights
+      this.cache.delete(card.id);
+      return { ...card, _score: this.score(card) };
+    });
+
+    // Sort remaining by new score descending
+    rescored.sort((a, b) => b._score - a._score);
+
+    // Apply diversity reranking if treatment group
+    const diversityCount = rescored.length > 10 ? Math.max(1, Math.floor(rescored.length * 0.15)) : 0;
+    let reranked;
+    if (diversityCount > 0 && experimentGroup === 'treatment') {
+      const forRerank = rescored.map(c => ({ ...c, _mmrScore: c._score }));
+      reranked = this.mmrRerank(forRerank, diversityCount);
+      reranked = reranked.map(({ _mmrScore, ...card }) => card);
+    } else if (diversityCount > 0 && experimentGroup === 'control') {
+      // Control: random serendipity — pick random mid-tier cards
+      const pool = rescored.slice(
+        Math.floor(rescored.length * 0.2),
+        Math.floor(rescored.length * 0.6)
+      );
+      const picks = pool.sort(() => Math.random() - 0.5).slice(0, diversityCount);
+      const pickIds = new Set(picks.map(c => c.id));
+      const rest = rescored.filter(c => !pickIds.has(c.id));
+      reranked = rest.length > 0 ? [rest[0], ...picks, ...rest.slice(1)] : picks;
+    } else {
+      reranked = rescored;
+    }
+
+    return [...swiped, ...reranked];
+  }
+  clear() { this.cache.clear(); this._tasteVec = null; }
 }

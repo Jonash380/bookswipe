@@ -140,6 +140,8 @@ _OL_BASE = 'https://openlibrary.org'
 _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
 _IGDB_BODY_RE = re.compile(r'^(fields|search|where|sort|limit|offset)')
+_OK_STEAM = re.compile(r'^(appdetails|featured|reviews|search|library)')
+STEAM_STORE_BASE = 'https://store.steampowered.com/api'
 
 # In-memory party sessions (swipe party feature)
 _parties = {}
@@ -192,6 +194,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/igdb/'):    return self._igdb(p[12:])
         if p.startswith('/proxy/steam/'):   return self._steam(p[13:])
         if p.startswith('/proxy/openlibrary/'): return self._openlibrary(p[18:])
+        if p.startswith('/proxy/party/'):   return self._party_get(p[13:])
         super().do_GET()
 
     def do_POST(self):
@@ -285,6 +288,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self._json({'error': 'Unknown party action'}, 404)
 
     def _party_get(self, path):
+        if not path.startswith('state'):
+            return self._json({'error': 'Unknown party action'}, 404)
         qs = path.split('?', 1)[1] if '?' in path else ''
         params = urllib.parse.parse_qs(qs)
         session_id = params.get('session', [None])[0]
@@ -662,6 +667,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.send_header('Access-Control-Max-Age', '86400')
+        self.send_header('Content-Security-Policy',
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https://image.tmdb.org https://*.googleusercontent.com https://*.steamstatic.com https://*.igdb.com https://books.google.com https://covers.openlibrary.org; "
+            "connect-src 'self' https://api.themoviedb.org https://api.trakt.tv https://api.igdb.com https://id.twitch.tv https://store.steampowered.com https://api.steampowered.com https://openlibrary.org https://www.googleapis.com https://api.openai.com; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'")
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        self.send_header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
         super().end_headers()
 
     def do_OPTIONS(self):

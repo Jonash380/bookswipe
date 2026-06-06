@@ -21,6 +21,9 @@ Object.defineProperty(global, 'navigator', {
 global.window.getComputedStyle = () => ({});
 global.window.location = new URL('http://localhost');
 
+// Provide Image constructor (used by portal cover probing in app.js)
+globalThis.Image = class Image { constructor() {} set src(v) {} set onerror(fn) {} };
+
 // Mock localStorage
 const localStorageMock = (() => {
   let store = {};

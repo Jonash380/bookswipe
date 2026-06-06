@@ -433,6 +433,317 @@ describe('Recommender', () => {
         assert.equal(score, 50);
       });
     });
+
+    describe('_scoreVibeMatch — vibe matrix influence', () => {
+      // W.vibe = 6, so max per-axis bonus = 6 * |bias|
+
+      it('should boost fast-paced item when vibePacing slider is high', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 80; // bias = 0.6
+        const item = makeItem('fast', {
+          mediaDNA: { tropes: [], pacing: ['relentless'], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        // 50 + 6 * 0.6 = 53.6 → clamped to 54 (rounded internally, but score is float)
+        assert.ok(score > 50, `score ${score} should be > 50 for matching fast pacing`);
+        assert.ok(score < 60, `score ${score} should be < 60 (vibe bonus is small)`);
+      });
+
+      it('should boost slow-burn item when vibePacing slider is low', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 20; // bias = -0.6
+        const item = makeItem('slow', {
+          mediaDNA: { tropes: [], pacing: ['slow_burn'], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for matching slow pacing`);
+      });
+
+      it('should NOT boost fast-paced item when vibePacing slider is low (mismatch)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 20; // want slow, item is fast → mismatch
+        const item = makeItem('fast-mismatch', {
+          mediaDNA: { tropes: [], pacing: ['relentless'], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.equal(score, 50, 'mismatched pacing should give no bonus');
+      });
+
+      it('should not apply vibe bonus when slider is at neutral (50)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 50;
+        app.state.vibeTone = 50;
+        app.state.vibeComplex = 50;
+        const item = makeItem('neutral-vibe', {
+          mediaDNA: { tropes: ['mystery_box'], pacing: ['relentless'], aesthetic: ['neon_noir'], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.equal(score, 50, 'neutral sliders should give no vibe bonus');
+      });
+
+      it('should NOT boost dark item when vibeTone slider is high (light mismatch)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeTone = 85; // want light, item is dark → mismatch
+        const item = makeItem('dark-mismatch', {
+          mediaDNA: { tropes: [], pacing: [], aesthetic: ['gritty_realism'], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.equal(score, 50, 'mismatched tone should give no bonus');
+      });
+
+      it('should NOT boost deep item when vibeComplex slider is low (popcorn mismatch)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeComplex = 15; // want popcorn, item is deep → mismatch
+        const item = makeItem('deep-mismatch', {
+          mediaDNA: { tropes: ['time_loop'], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.equal(score, 50, 'mismatched complexity should give no bonus');
+      });
+
+      it('should boost dark/gritty item when vibeTone slider is low (dark)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeTone = 15; // want dark, bias = -0.7
+        const item = makeItem('dark', {
+          mediaDNA: { tropes: [], pacing: [], aesthetic: ['neon_noir'], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for matching dark tone`);
+      });
+
+      it('should boost light/cozy item when vibeTone slider is high (light)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeTone = 85; // want light, bias = 0.7
+        const item = makeItem('light', {
+          mediaDNA: { tropes: [], pacing: [], aesthetic: ['cottagecore'], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for matching light tone`);
+      });
+
+      it('should boost deep/complex item when vibeComplex slider is high', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeComplex = 90; // want deep, bias = 0.8
+        const item = makeItem('deep', {
+          mediaDNA: { tropes: ['mystery_box'], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for matching deep complexity`);
+      });
+
+      it('should boost simple/fun item when vibeComplex slider is low (popcorn)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeComplex = 10; // want popcorn, bias = -0.8
+        const item = makeItem('simple', {
+          mediaDNA: { tropes: ['found_family'], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for matching simple complexity`);
+      });
+
+      it('should pick up tone signals from tags (dark, gritty, cozy)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeTone = 80; // want light, bias = 0.6
+        const item = makeItem('cozy-tags', {
+          tags: ['cozy', 'gentle'],
+          mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for cozy tags matching light tone`);
+      });
+
+      it('should pick up complexity signals from tags (mind-bending, cerebral)', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibeComplex = 85; // want deep, bias = 0.7
+        const item = makeItem('complex-tags', {
+          tags: ['mind-bending', 'cerebral'],
+          mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `score ${score} should be > 50 for complex tags`);
+      });
+
+      it('should combine bonuses from multiple vibe axes', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 90;  // want fast, bias = 0.8
+        app.state.vibeTone = 10;    // want dark, bias = -0.8
+        app.state.vibeComplex = 90; // want deep, bias = 0.8
+        const item = makeItem('multi-vibe', {
+          mediaDNA: {
+            tropes: ['mystery_box'],
+            pacing: ['relentless'],
+            aesthetic: ['neon_noir'],
+            warnings: [],
+          },
+        });
+        const score = rec.score(item);
+        // All three axes should contribute: 50 + ~4.8 + ~4.8 + ~4.8 ≈ 64.4
+        assert.ok(score > 60, `score ${score} should be > 60 with all 3 axes matching`);
+      });
+
+      it('should work for games via _scoreGame path', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 85; // want fast
+        const item = makeItem('game-vibe', {
+          type: 'game', source: 'igdb',
+          platforms: [], genres: [], tags: [],
+          mediaDNA: { tropes: [], pacing: ['fast_paced'], aesthetic: [], warnings: [] },
+        });
+        const score = rec.score(item);
+        assert.ok(score > 50, `game score ${score} should be > 50 for matching vibe`);
+      });
+
+      it('should handle item with no mediaDNA gracefully', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.vibePacing = 90;
+        app.state.vibeTone = 10;
+        app.state.vibeComplex = 90;
+        const item = makeItem('no-dna'); // mediaDNA defaults to null
+        const score = rec.score(item);
+        assert.equal(score, 50, 'no mediaDNA should give zero vibe bonus');
+      });
+    });
+
+    describe('_scoreDescriptionSimilarity — TF-IDF taste vector', () => {
+      it('should return 0 when user has no liked history', () => {
+        app.history = [];
+        rec._tasteVec = null;
+        const item = makeItem('desc1', { overview: 'A thrilling adventure in space' });
+        const bonus = rec._scoreDescriptionSimilarity(item);
+        assert.equal(bonus, 0);
+      });
+
+      it('should return 0 when item has no description', () => {
+        app.history = [{ action: 'like', overview: 'A dark thriller about revenge' }];
+        rec._tasteVec = null;
+        const item = makeItem('desc2', { overview: '' });
+        const bonus = rec._scoreDescriptionSimilarity(item);
+        assert.equal(bonus, 0);
+      });
+
+      it('should return positive bonus when description shares keywords with liked items', () => {
+        app.history = [
+          { action: 'like', overview: 'A dark noir detective investigates murders in the city' },
+          { action: 'like', overview: 'The detective solves dark mysteries in a noir city setting' },
+        ];
+        rec._tasteVec = null;
+        const item = makeItem('desc3', { overview: 'A detective noir mystery set in a dark underground city' });
+        const bonus = rec._scoreDescriptionSimilarity(item);
+        assert.ok(bonus > 0, `bonus ${bonus} should be > 0 for matching description`);
+      });
+
+      it('should return 0 when description has no shared keywords', () => {
+        app.history = [
+          { action: 'like', overview: 'A dark noir detective investigates murders' },
+        ];
+        rec._tasteVec = null;
+        const item = makeItem('desc4', { overview: 'Happy puppies play in sunny meadows with butterflies' });
+        const bonus = rec._scoreDescriptionSimilarity(item);
+        assert.equal(bonus, 0);
+      });
+
+      it('should cache the taste vector', () => {
+        app.history = [
+          { action: 'like', overview: 'A thrilling spy adventure across europe with espionage' },
+          { action: 'like', overview: 'Dark noir detective investigates mysterious murders in the city' },
+        ];
+        rec._tasteVec = null;
+        const item = makeItem('desc5', { overview: 'A spy thriller set across europe' });
+        rec._scoreDescriptionSimilarity(item);
+        assert.ok(rec._tasteVec instanceof Map, 'taste vector should be cached as a Map');
+        assert.ok(rec._tasteVec.size > 0, 'taste vector should have entries');
+      });
+    });
+
+    describe('_scoreRecentBias — HMM-lite recent action bias', () => {
+      it('should return 0 when history is too short', () => {
+        app.history = [{ action: 'like', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } }];
+        const item = makeItem('rb1', { mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] } });
+        assert.equal(rec._scoreRecentBias(item), 0);
+      });
+
+      it('should boost item matching recent likes', () => {
+        app.history = [
+          { action: 'like', mediaDNA: { tropes: ['revenge'], pacing: ['relentless'], aesthetic: [] } },
+          { action: 'like', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+        ];
+        const item = makeItem('rb2', { mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] } });
+        const bonus = rec._scoreRecentBias(item);
+        assert.ok(bonus > 0, `bonus ${bonus} should be > 0 for matching recent likes`);
+      });
+
+      it('should penalize item matching recent nopes', () => {
+        app.history = [
+          { action: 'nope', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+          { action: 'nope', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+        ];
+        const item = makeItem('rb3', { mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] } });
+        const bonus = rec._scoreRecentBias(item);
+        assert.ok(bonus < 0, `bonus ${bonus} should be < 0 for matching recent nopes`);
+      });
+
+      it('should weight recent actions more heavily (exponential decay)', () => {
+        // First swipe is most recent, should have highest weight
+        app.history = [
+          { action: 'like', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+          { action: 'nope', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+        ];
+        const item = makeItem('rb4', { mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] } });
+        const bonus = rec._scoreRecentBias(item);
+        // Like (most recent, weight 1.0) should outweigh nope (weight 0.7)
+        assert.ok(bonus > 0, `bonus ${bonus} should be > 0 when recent like outweighs older nope`);
+      });
+
+      it('should return 0 for item with no DNA tags', () => {
+        app.history = [
+          { action: 'like', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+          { action: 'like', mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } },
+        ];
+        const item = makeItem('rb5'); // no mediaDNA
+        assert.equal(rec._scoreRecentBias(item), 0);
+      });
+    });
+
+    describe('_bayesianRating — community rating bonus', () => {
+      it('should return 0 when item has no rating', () => {
+        const item = makeItem('br1');
+        assert.equal(rec._bayesianRating(item), 0);
+      });
+
+      it('should return 0 when item has no vote_count', () => {
+        const item = makeItem('br2', { rating: 8.5 });
+        assert.equal(rec._bayesianRating(item), 0);
+      });
+
+      it('should give +4 for high-rated well-voted item', () => {
+        const item = makeItem('br3', { rating: 8.5, vote_count: 5000 });
+        assert.equal(rec._bayesianRating(item), 4);
+      });
+
+      it('should give +2 for good-rated item', () => {
+        const item = makeItem('br4', { rating: 7.5, vote_count: 1000 });
+        assert.equal(rec._bayesianRating(item), 2);
+      });
+
+      it('should give -3 for poorly-rated item', () => {
+        const item = makeItem('br5', { rating: 3.0, vote_count: 500 });
+        assert.equal(rec._bayesianRating(item), -3);
+      });
+
+      it('should penalize low-vote-count items toward global average', () => {
+        // High rating but very few votes → pulled toward 6.5
+        const itemFewVotes = makeItem('br6', { rating: 9.0, vote_count: 5 });
+        const itemManyVotes = makeItem('br7', { rating: 9.0, vote_count: 5000 });
+        const bonusFew = rec._bayesianRating(itemFewVotes);
+        const bonusMany = rec._bayesianRating(itemManyVotes);
+        assert.ok(bonusMany >= bonusFew, 'high-vote item should score >= low-vote item');
+      });
+
+      it('should work with vote_average field (TMDB format)', () => {
+        const item = { id: 'br8', vote_average: 9.0, vote_count: 5000 };
+        assert.equal(rec._bayesianRating(item), 4);
+      });
+    });
   });
 
   // ================================================================
@@ -671,5 +982,145 @@ describe('Recommender', () => {
       const second = rec.score(item);
       assert.equal(first, second);
     });
+  });
+});
+
+describe('rescoreQueue', () => {
+  let app, rec;
+
+  beforeEach(() => {
+    app = makeMockApp();
+    rec = new Recommender(app);
+    resetProfile(rec);
+  });
+
+  afterEach(() => {
+    storageMock.clear();
+  });
+
+  it('returns original cards when startIndex >= cards.length', () => {
+    const cards = [makeItem(1), makeItem(2)];
+    const result = rec.rescoreQueue(cards, 5);
+    assert.strictEqual(result, cards);
+  });
+
+  it('returns original cards when cards is null or undefined', () => {
+    assert.strictEqual(rec.rescoreQueue(null, 0), null);
+    assert.strictEqual(rec.rescoreQueue(undefined, 0), undefined);
+  });
+
+  it('preserves swiped cards and re-scores remaining', () => {
+    rec.profile.totalSwipes = 10;
+    rec.profile.genreWeights = { 28: 10, 35: -5 };
+    app.state.selectedGenres = [28]; // score() uses selectedGenres, not profile.genreWeights
+
+    const swiped1 = makeItem(1, { genres: [28] });
+    const remaining1 = makeItem(2, { genres: [35] });
+    const remaining2 = makeItem(3, { genres: [28] });
+
+    const cards = [swiped1, remaining1, remaining2];
+    const result = rec.rescoreQueue(cards, 1);
+
+    // Swiped card preserved at index 0
+    assert.strictEqual(result[0].id, 1);
+    // Remaining cards re-sorted: genre 28 item should rank higher than genre 35
+    assert.strictEqual(result[1].id, 3);
+    assert.strictEqual(result[2].id, 2);
+  });
+
+  it('re-scores cache entries are invalidated before scoring', () => {
+    rec.profile.totalSwipes = 10;
+    app.state.selectedGenres = [28]; // score() uses selectedGenres, not profile.genreWeights
+
+    const item = makeItem(1, { genres: [28] });
+    const cards = [item];
+
+    // Prime the cache — score should be 50 + 1*15 = 65
+    const firstScore = rec.score(item);
+    assert.ok(rec.cache.has(1));
+    assert.strictEqual(firstScore, 65);
+
+    // Change selectedGenres so the score changes
+    app.state.selectedGenres = [];
+
+    // rescoreQueue should clear cache and get new score (50, no genre match)
+    const result = rec.rescoreQueue(cards, 0);
+    const newScore = result[0]._score;
+    assert.notStrictEqual(newScore, firstScore);
+    assert.strictEqual(newScore, 50);
+  });
+
+  it('handles empty remaining cards gracefully', () => {
+    const cards = [makeItem(1)];
+    const result = rec.rescoreQueue(cards, 1);
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].id, 1);
+  });
+
+  it('handles single remaining card', () => {
+    rec.profile.totalSwipes = 10;
+    const cards = [makeItem(1), makeItem(2, { genres: [28] })];
+    const result = rec.rescoreQueue(cards, 1);
+    assert.strictEqual(result.length, 2);
+    assert.strictEqual(result[0].id, 1);
+    assert.strictEqual(result[1].id, 2);
+    assert.ok('_score' in result[1]);
+  });
+
+  it('returns all cards when startIndex is 0', () => {
+    rec.profile.totalSwipes = 10;
+    rec.profile.genreWeights = { 28: 10, 35: -5 };
+    app.state.selectedGenres = [28]; // score() uses selectedGenres, not profile.genreWeights
+
+    const cards = [makeItem(1, { genres: [35] }), makeItem(2, { genres: [28] })];
+    const result = rec.rescoreQueue(cards, 0);
+    assert.strictEqual(result.length, 2);
+    // genre 28 should rank higher
+    assert.strictEqual(result[0].id, 2);
+    assert.strictEqual(result[1].id, 1);
+  });
+
+  it('applies MMR reranking for treatment group with enough cards', () => {
+    rec.profile.totalSwipes = 20;
+    rec.profile.genreWeights = { 28: 10 };
+
+    // Create 15 cards to trigger diversity logic (15% of 15 = 2)
+    const cards = [];
+    for (let i = 0; i < 15; i++) {
+      cards.push(makeItem(i, { genres: [28], _score: 80 - i }));
+    }
+
+    const result = rec.rescoreQueue(cards, 0, 'treatment');
+    assert.strictEqual(result.length, 15);
+    // All cards should still be present
+    const ids = new Set(result.map(c => c.id));
+    for (let i = 0; i < 15; i++) assert.ok(ids.has(i));
+  });
+
+  it('applies random serendipity for control group with enough cards', () => {
+    rec.profile.totalSwipes = 20;
+    rec.profile.genreWeights = { 28: 10 };
+
+    const cards = [];
+    for (let i = 0; i < 15; i++) {
+      cards.push(makeItem(i, { genres: [28], _score: 80 - i }));
+    }
+
+    const result = rec.rescoreQueue(cards, 0, 'control');
+    assert.strictEqual(result.length, 15);
+    const ids = new Set(result.map(c => c.id));
+    for (let i = 0; i < 15; i++) assert.ok(ids.has(i));
+  });
+
+  it('skips diversity reranking for small queues', () => {
+    rec.profile.totalSwipes = 10;
+    rec.profile.genreWeights = { 28: 10, 35: -5 };
+    app.state.selectedGenres = [28]; // score() uses selectedGenres, not profile.genreWeights
+
+    const cards = [makeItem(1, { genres: [35] }), makeItem(2, { genres: [28] })];
+    const result = rec.rescoreQueue(cards, 0, 'treatment');
+    // With only 2 cards, diversityCount = 0, so no reranking
+    assert.strictEqual(result[0].id, 2);
+    assert.strictEqual(result[1].id, 1);
   });
 });
