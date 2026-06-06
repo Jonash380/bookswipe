@@ -944,8 +944,8 @@ export class Recommender {
 
     // ---- Build the reason and health check ----
     const actionNames = {
-      like: de ? 'Rechts = Gespeichert' : 'Right = Saved',
-      nope: isLongPressReject ? (de ? 'Langdruck-Ablehnung' : 'Long-Press Reject') : (de ? 'Links = Uebersprungen' : 'Left = Skipped'),
+      like: de ? 'Rechtswisch' : 'Right Swipe',
+      nope: isLongPressReject ? (de ? 'Langdruck-Ablehnung' : 'Long-Press Reject') : (de ? 'Linkswisch' : 'Left Swipe'),
     };
 
     const actionAnalyzed = actionNames[action] || action;

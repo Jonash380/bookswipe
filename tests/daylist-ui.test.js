@@ -2,7 +2,7 @@ import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-// ---- Set up jsdom environment (same pattern as peek.test.js) ----
+// ---- Set up jsdom environment ----
 const dom = new JSDOM('<!DOCTYPE html><div id="app"></div>', {
   url: 'http://localhost',
   pretendToBeVisual: true,

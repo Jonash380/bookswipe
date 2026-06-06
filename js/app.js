@@ -1092,7 +1092,7 @@ class App {
         }
       }
     }
-    this._currentWildcard = wildcard; // store for peek/card modal access
+    this._currentWildcard = wildcard; // store for card modal access
 
     const dnaTags = wildcardTropes.length ? wildcardTropes : this._getCardDNATags(card);
     const coverStyle = isBlind ? 'filter:blur(20px);transform:scale(1.1);' : '';
@@ -1335,7 +1335,7 @@ class App {
     this._setupLongPress(cardEl, card);
   }
 
-  // ===== PEEK OVERLAY (long-press quick summary) =====
+  // ===== LONG-PRESS → DEEP DIVE PANEL =====
   _setupLongPress(cardEl, card) {
     let pressTimer = null;
     let peekShown = false;
@@ -1397,7 +1397,7 @@ class App {
   }
 
 
-  // ===== EXPLICIT FEEDBACK MODAL (triggered from peek "Why not?" button) =====
+  // ===== EXPLICIT FEEDBACK MODAL (triggered from deep-dive "Why not?" button) =====
   _showFeedbackModal(card) {
     const de = this.lang === 'de';
     const overlay = document.createElement('div');

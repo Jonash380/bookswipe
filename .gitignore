@@ -7,3 +7,4 @@ sync.log
 .env
 start-with-keys.sh
 node_modules/
+.aider*
