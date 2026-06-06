@@ -12,6 +12,10 @@ COPY static/ static/
 ENV BOOKSWIPE_BIND=0.0.0.0
 ENV BOOKSWIPE_PORT=3000
 
+RUN useradd -r -s /bin/false bookswipe
+RUN chown -R bookswipe:bookswipe /app
+USER bookswipe
+
 EXPOSE 3000
 
 # Health check against the /health endpoint

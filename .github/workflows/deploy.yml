@@ -21,7 +21,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run unit tests
         run: npm test
@@ -53,12 +53,24 @@ jobs:
       - name: Remove existing container
         run: docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
 
+      - name: Create .env from secrets if available
+        run: |
+          if [ -n "$BOOKSWIPE_ENV" ]; then
+            echo "$BOOKSWIPE_ENV" > .env
+          fi
+        env:
+          BOOKSWIPE_ENV: ${{ secrets.BOOKSWIPE_ENV }}
+
       - name: Start new container
         run: |
+          ENV_FLAG=""
+          if [ -f .env ]; then
+            ENV_FLAG="--env-file .env"
+          fi
           docker run -d \
             --name ${{ env.CONTAINER_NAME }} \
             --restart unless-stopped \
-            --env-file .env \
+            $ENV_FLAG \
             -p 3000:3000 \
             ${{ env.IMAGE_NAME }}:latest
 
