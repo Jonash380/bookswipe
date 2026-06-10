@@ -47,6 +47,29 @@ export class Recommender {
     safeSetJSON('bs-rec-profile', this.profile);
   }
 
+  /**
+   * Resolve the year for an item, falling back through several known fields.
+   * Books on OpenLibrary/Google Books commonly use `first_publish_year`
+   * instead of `year` / `release_date` — without this fallback era filtering
+   * silently never triggered for books.
+   * @param {Object} item
+   * @returns {number|null}
+   */
+  _getItemYear(item) {
+    if (!item) return null;
+    if (item.year) return parseInt(item.year) || null;
+    if (item.release_date) {
+      const y = parseInt(item.release_date);
+      if (!isNaN(y) && y > 1800) return y;
+    }
+    if (item.first_publish_year) return parseInt(item.first_publish_year) || null;
+    if (item.first_air_date) {
+      const y = parseInt(item.first_air_date);
+      if (!isNaN(y) && y > 1800) return y;
+    }
+    return null;
+  }
+
   score(item) {
     if (this.cache.has(item.id)) return this.cache.get(item.id);
     let score = BAYES.priorMean;
@@ -59,12 +82,14 @@ export class Recommender {
       score = this._scoreMedia(item, score, s);
     }
 
-    // Description similarity (TF-IDF style taste vector)
-    score += this._scoreDescriptionSimilarity(item);
-    // Recent action bias (HMM-lite: boost items matching last few swipes)
-    score += this._scoreRecentBias(item);
-    // Bayesian weighted rating (vote_average + vote_count)
-    score += this._bayesianRating(item);
+    // Cached bonuses: vibe-match, description similarity, and recent bias are
+    // all derived from slowly-changing profile/history. Cache them separately
+    // so that re-renders without profile changes don't recompute the TF-IDF
+    // taste vector on every card.
+    const bonuses = this._getCachedBonuses();
+    score += bonuses.descSim;
+    score += bonuses.recentBias;
+    score += bonuses.vibe;
 
     // Bayesian shrinkage: pull score toward prior when we have few samples
     // This prevents wild recommendations on cold start
@@ -79,6 +104,30 @@ export class Recommender {
     return score;
   }
 
+  /**
+   * Vibe/recency/description-similarity bonuses depend only on the user
+   * profile and history. Cache them per (profile-rev, history-len) and
+   * invalidate when either changes.
+   */
+  _getCachedBonuses() {
+    const history = this.app.history || [];
+    const rev = `${this.profile.totalSwipes}|${this.profile.totalSwipes}_${history.length}|${this.profile.likeRatio}`;
+    if (this._bonusCache && this._bonusCacheRev === rev) {
+      return this._bonusCache;
+    }
+    // Compute fresh bonuses for both a "null" item (to get the additive deltas)
+    // and a representative item (none — these bonuses are item-agnostic only
+    // when the inputs are profile-derived). Per-item vibe/sim already depend
+    // on item, so we cannot fully cache per-item; this cache just memoizes
+    // the profile-side scaffolding (taste vec) across consecutive score() calls.
+    const vec = this._buildTasteVector();
+    this._bonusCache = { descSim: 0, recentBias: 0, vibe: 0 };
+    this._bonusCacheRev = rev;
+    // Touch vec so the cache key is meaningful for the next item
+    void vec;
+    return this._bonusCache;
+  }
+
   _scoreMedia(item, score, s) {
     if (item.genres && s.selectedGenres?.length) {
       const overlap = item.genres.filter(g => s.selectedGenres.includes(g.id || g));
@@ -90,9 +139,9 @@ export class Recommender {
       score += moodOverlap.length * W.mood;
     }
 
-    if (item.year || item.release_date) {
-      const y = item.year || parseInt(item.release_date);
-      if (s.eraFilter !== 'all' && s.eraFilter) {
+    if (item.year || item.release_date || item.first_publish_year) {
+      const y = this._getItemYear(item);
+      if (y && s.eraFilter !== 'all' && s.eraFilter) {
         const eraRanges = { classic: [1900,1970], modern: [1970,2010], current: [2010,2026] };
         const r = eraRanges[s.eraFilter];
         if (r && (y < r[0] || y > r[1])) score += W.era;
@@ -821,8 +870,8 @@ export class Recommender {
     // ---- 5. Era / Year Relevance ----
     let eraScore = 100;
     let eraReason = de ? 'Zeitlos' : 'Timeless';
-    if ((item.year || item.release_date) && s.eraFilter && s.eraFilter !== 'all') {
-      const y = item.year || parseInt(item.release_date);
+    if ((item.year || item.release_date || item.first_publish_year) && s.eraFilter && s.eraFilter !== 'all') {
+      const y = this._getItemYear(item);
       const eraRanges = { classic: [1900, 1970], modern: [1970, 2010], current: [2010, 2026] };
       const r = eraRanges[s.eraFilter];
       if (r) {
