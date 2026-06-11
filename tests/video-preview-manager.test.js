@@ -456,7 +456,9 @@ describe('setupCardPreview', () => {
       assert.equal(activeCardRef.card, null, 'initially null');
 
       cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
-      await new Promise(r => originalSetTimeout(r, 50));
+      // Wait for: setTimeout(fn,0) → async getVideoId() → promise resolution
+      // 250ms is generous enough to survive full-suite load on slower machines
+      await new Promise(r => originalSetTimeout(r, 250));
 
       assert.equal(activeCardRef.card, cardEl, 'should track active card');
     });
@@ -476,7 +478,7 @@ describe('setupCardPreview', () => {
       });
 
       cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
-      await new Promise(r => originalSetTimeout(r, 50));
+      await new Promise(r => originalSetTimeout(r, 250));
       assert.equal(activeCardRef.card, cardEl);
 
       stopPreview();
@@ -509,12 +511,12 @@ describe('setupCardPreview', () => {
 
       // Start card1
       card1.dispatchEvent(new window.MouseEvent('mouseenter'));
-      await new Promise(r => originalSetTimeout(r, 50));
+      await new Promise(r => originalSetTimeout(r, 250));
       assert.ok(card1.querySelector('iframe'), 'card1 should have iframe');
 
       // Start card2 — should stop card1
       card2.dispatchEvent(new window.MouseEvent('mouseenter'));
-      await new Promise(r => originalSetTimeout(r, 50));
+      await new Promise(r => originalSetTimeout(r, 250));
       assert.ok(card2.querySelector('iframe'), 'card2 should have iframe');
       assert.equal(activeCardRef.card, card2, 'active should be card2');
     });
@@ -593,7 +595,7 @@ describe('setupCardPreview', () => {
       });
 
       cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
-      await new Promise(r => originalSetTimeout(r, 50));
+      await new Promise(r => originalSetTimeout(r, 250));
       assert.equal(activeCardRef.card, cardEl);
 
       cleanup();

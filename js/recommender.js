@@ -513,8 +513,7 @@ export class Recommender {
     }
     this._saveProfile();
     this._applyDecay();
-    this.cache.clear();
-    this._tasteVec = null;
+    this.clear();
   }
 
   _updateEntityWeights(item, delta) {
