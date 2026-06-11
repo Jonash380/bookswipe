@@ -1,6 +1,6 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
+import { Window } from 'happy-dom';
 import { readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -8,12 +8,11 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+const window = new Window({
   url: 'http://localhost',
-  pretendToBeVisual: true,
 });
-global.window = dom.window;
-global.document = dom.window.document;
+global.window = window;
+global.document = window.document;
 global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
 
 Object.defineProperty(global, 'navigator', {

@@ -26,4 +26,4 @@ echo "   Press Ctrl+C to stop"
 echo ""
 
 # Run in foreground (Ctrl+C to stop)
-python3 server.py
+exec python3 server.py

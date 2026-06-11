@@ -1,15 +1,14 @@
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
+import { Window } from 'happy-dom';
 
 // Set up minimal DOM
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+const window = new Window({
   url: 'http://localhost',
-  pretendToBeVisual: true,
 });
-global.window = dom.window;
-global.document = dom.window.document;
-global.performance = dom.window.performance;
+global.window = window;
+global.document = window.document;
+global.performance = window.performance;
 global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
 global.cancelAnimationFrame = (id) => clearTimeout(id);
 

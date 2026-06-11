@@ -4,6 +4,7 @@ import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
 import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
 import { fetchBooks, fetchUpcomingBooks, fetchUpcomingMedia, mapTmdbResult } from './api.js';
 import { SwipeEngine } from './swipe.js';
+import { LingerGesture } from './ling-gesture.js';
 import { DeepDivePanel } from './deep-dive.js';
 import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
@@ -276,8 +277,6 @@ class App {
     }
     // Migration: ensure new state fields have defaults
     if (!this.state.radarDays) this.state.radarDays = 60;
-    this.tr = LANG[this.lang] || LANG.de;
-    this._genreMap = getTMDBGenreMap(this.lang);
     // URL params override localStorage state for shareable links
     this._applyURLFilters();
     this.tr = LANG[this.lang] || LANG.de;
@@ -385,6 +384,8 @@ class App {
       await removeFromDisliked(last.id);
       this.disliked = this.disliked.filter(d => d.id !== last.id);
     }
+    // Invalidate recommender taste vector cache since history changed
+    this.recommender.clear();
     this.currentCards.splice(this.currentCardIndex, 0, last);
     const app = document.getElementById('app');
     this.renderCards(app);
@@ -1107,7 +1108,6 @@ class App {
       return this._completeRapidFire(app);
     }
     const item = items[idx];
-    const elapsed = ((Date.now() - this._rapidFireStart) / 1000).toFixed(1);
     const isGames = this.state.mediaType === 'games';
     const stepDots = isGames
       ? `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div></div>`
@@ -1140,7 +1140,8 @@ class App {
       </div>`;
     const cardEl = app.querySelector('.rapid-fire-card');
     if (cardEl) {
-      new SwipeEngine(cardEl, dir => {
+      if (this._rapidFireEngine) this._rapidFireEngine.destroy();
+      this._rapidFireEngine = new SwipeEngine(cardEl, dir => {
         if (dir === 'right') {
           this._rapidFireLikes.push(item);
           document.body.classList.add('swipe-flash-right');
@@ -1570,6 +1571,102 @@ class App {
   }
 
   // ===== CARD RENDERING =====
+  // Helper: returns the hero (cover, overlay, match badge) section of a card
+  _renderHero(card, isGame, isBook, coverStyle) {
+    return `
+        <div class="card-hero">
+          ${card.backdrop || card.cover
+            ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.backdrop || card.cover)}" alt="${escapeHTML(card.title)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+            : ''}
+          <div class="card-cover placeholder" ${card.backdrop || card.cover ? 'style="display:none"' : ''}>${isGame ? '🎮' : isBook ? '📚' : '🎬'}</div>
+          <div class="card-hero-overlay"></div>
+          ${card._score != null ? `<span class="card-match-badge">${Math.round(card._score * 100)}%</span>` : ''}
+          ${card.isUpcoming ? `<span class="upcoming-badge is-upcoming\">${this.tr.upcoming}</span>` : card.releaseDate ? `<span class="upcoming-badge just-released\">${this.tr.justReleased}</span>` : ''}
+        </div>`;
+  }
+
+  // Helper: returns the info side (title, meta, genres, overview) section of a card
+  _renderSide(card, isBlind, isBlindGame, t, genreStr, wildcardHook, wildcardBridge) {
+    return `
+        <div class="card-side">
+          <div class="card-side-info">
+            <h2 class="card-title">${escapeHTML(card.title)}</h2>
+            <div class="card-meta-row">
+              ${card.year ? `<span class="card-year">${card.year}</span>` : ''}
+              ${card.rating ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
+              <span class="card-type">${t}</span>
+            </div>
+            ${genreStr && !isBlind ? `<div class="card-genres-row">${(card.genres || []).slice(0, 3).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="card-genre-chip">${icon} ${escapeHTML(name)}</span>`; }).join('')}</div>` : ''}
+            ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview)}</p>` : ''}
+            ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
+            ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
+          </div>
+        </div>`;
+  }
+
+  // Helper: returns the game-specific badges (platform, playtime, steam, etc.)
+  _renderGameExtras(card) {
+    if (card.type !== 'game' && card.source !== 'igdb') return '';
+    const inLibrary = this._isInLibrary(card) ? `<div class="in-library-badge">🎮 ${this.tr.inLibrary}</div>` : '';
+    const badges = `
+              <div class="game-card-badges">
+                ${this._renderPlatformBadges(card)}
+                ${this._renderPlaytimeBadge(card)}
+                ${this._renderMultiplayerBadge(card)}
+                ${this._renderMetacriticBadge(card)}
+              </div>
+              <div class="game-card-steam">
+                ${this._renderSteamTags(card)}
+                ${this._renderPriceBadge(card)}
+                ${this._renderReviewBadge(card)}
+              </div>
+              ${this._renderStoreButtons(card)}`;
+    return inLibrary + badges;
+  }
+
+  // Helper: returns the blind-date overlay (wildcard badge, traits, tropes, etc.)
+  _renderBlindDate(card, isBlind, isBlindGame, dnaTags, wildcard, wildcardHook, wildcardMood, wildcardPacing, wildcardTropes) {
+    if (!isBlind) return '';
+    if (isBlindGame) {
+      return `
+            <div class="blind-game-overlay">
+              <div class="blind-game-mechanics">${this._getBlindGameMechanics(card)}</div>
+              <p class="blind-game-hook">${escapeHTML(this._getBlindGameHook(card))}</p>
+              <div class="blind-game-meta">
+                ${this._renderPlaytimeBadge(card)}
+                ${this._renderPlatformBadges(card)}
+              </div>
+            </div>`;
+    }
+    if (wildcard) {
+      return `
+            <div class="wildcard-badge">🎲 ${this.lang === 'de' ? 'Wildcard' : 'Wildcard'}</div>
+            <div class="blind-tags wildcard-traits">
+              <span class="blind-tag wildcard-mood">🎭 ${escapeHTML(wildcardMood)}</span>
+              <span class="blind-tag wildcard-pacing">⏱ ${escapeHTML(wildcardPacing)}</span>
+            </div>
+            ${wildcardTropes.length ? `<div class="blind-tags">${wildcardTropes.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}`;
+    }
+    if (dnaTags.length) {
+      return `
+            <div class="blind-tags">${dnaTags.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>`;
+    }
+    return '';
+  }
+
+  // Helper: returns the keyboard hint bar (shown briefly on first render)
+  _renderKeyboardHints() {
+    const de = this.lang === 'de';
+    return `
+      <div class="keyboard-hints" id="keyboard-hints" aria-hidden="true">
+        <div class="key-hint"><kbd>←</kbd> ${de ? 'Nein' : 'Nope'}</div>
+        <div class="key-hint"><kbd>→</kbd> ${de ? 'Ja' : 'Yes'}</div>
+        <div class="key-hint"><kbd>↑</kbd> ${de ? 'Später' : 'Skip'}</div>
+        <div class="key-hint"><kbd>I</kbd> ${de ? 'Info' : 'Info'}</div>
+        <div class="key-hint"><kbd>Z</kbd> ${de ? 'Undo' : 'Undo'}</div>
+      </div>`;
+  }
+
   renderCards(app) {
     const card = this.currentCards[this.currentCardIndex];
     if (!card) { this.renderDiscover(app); return; }
@@ -1618,15 +1715,6 @@ class App {
     if (isBlindGame) cardClass += ' blind-date-game';
 
     const platformBadges = isGame ? this._renderPlatformBadges(card) : '';
-    const playtimeBadge = isGame ? this._renderPlaytimeBadge(card) : '';
-    const multiplayerBadge = isGame ? this._renderMultiplayerBadge(card) : '';
-    const steamTags = isGame ? this._renderSteamTags(card) : '';
-    const priceBadge = isGame ? this._renderPriceBadge(card) : '';
-    const reviewBadge = isGame ? this._renderReviewBadge(card) : '';
-    const metacriticBadge = isGame ? this._renderMetacriticBadge(card) : '';
-    const storeButtons = isGame ? this._renderStoreButtons(card) : '';
-    const blindGameHook = isBlindGame ? this._getBlindGameHook(card) : '';
-    const blindGameMechanics = isBlindGame ? this._getBlindGameMechanics(card) : '';
 
     app.innerHTML = `
       <div class="discover">
@@ -1671,66 +1759,11 @@ class App {
         ${this._renderFilterChipsHtml()}
         <div class="card-stack">
           <div class="${cardClass}" data-id="${escapeHTML(card.id)}">
-            <div class="card-hero">
-              ${card.backdrop || card.cover
-                ? `<img class="card-cover" loading="lazy" style="${coverStyle}" src="${escapeHTML(card.backdrop || card.cover)}" alt="${escapeHTML(card.title)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-                : ''}
-              <div class="card-cover placeholder" ${card.backdrop || card.cover ? 'style="display:none"' : ''}>${isGame ? '🎮' : isBook ? '📚' : '🎬'}</div>
-              <div class="card-hero-overlay"></div>
-              ${card._score != null ? `<span class="card-match-badge">${Math.round(card._score * 100)}%</span>` : ''}
-              ${card.isUpcoming ? `<span class="upcoming-badge is-upcoming">${this.tr.upcoming}</span>` : card.releaseDate ? `<span class="upcoming-badge just-released">${this.tr.justReleased}</span>` : ''}
-            </div>
-            <div class="card-side">
-              <div class="card-side-info">
-                <h2 class="card-title">${escapeHTML(card.title)}</h2>
-                <div class="card-meta-row">
-                  ${card.year ? `<span class="card-year">${card.year}</span>` : ''}
-                  ${card.rating ? `<span class="card-rating">⭐ ${typeof card.rating === 'number' ? card.rating.toFixed(1) : card.rating}</span>` : ''}
-                  <span class="card-type">${t}</span>
-                </div>
-                ${genreStr && !isBlind ? `<div class="card-genres-row">${(card.genres || []).slice(0, 3).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `<span class="card-genre-chip">${icon} ${escapeHTML(name)}</span>`; }).join('')}</div>` : ''}
-                ${card.overview && !isBlind ? `<p class="card-overview">${escapeHTML(card.overview)}</p>` : ''}
-                ${isBlind && !isBlindGame ? (wildcardHook ? `<p class="card-logline wildcard-hook">${escapeHTML(wildcardHook)}</p>` : card.overview ? `<p class="card-logline">${escapeHTML(card.overview.split('.')[0])}.</p>` : '') : ''}
-                ${wildcardBridge ? `<p class="wildcard-bridge">💡 ${escapeHTML(wildcardBridge)}</p>` : ''}
-              </div>
-            </div>
-            ${isBlindGame ? `
-              <div class="blind-game-overlay">
-                <div class="blind-game-mechanics">${blindGameMechanics}</div>
-                <p class="blind-game-hook">${escapeHTML(blindGameHook)}</p>
-                <div class="blind-game-meta">
-                  ${playtimeBadge}
-                  ${platformBadges}
-                </div>
-              </div>
-            ` : ''}
-            ${isBlind && !isGame ? `
-              ${wildcard ? `
-                <div class="wildcard-badge">🎲 ${this.lang === 'de' ? 'Wildcard' : 'Wildcard'}</div>
-                <div class="blind-tags wildcard-traits">
-                  <span class="blind-tag wildcard-mood">🎭 ${escapeHTML(wildcardMood)}</span>
-                  <span class="blind-tag wildcard-pacing">⏱ ${escapeHTML(wildcardPacing)}</span>
-                </div>
-                ${wildcardTropes.length ? `<div class="blind-tags">${wildcardTropes.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}
-              ` : `
-                ${dnaTags.length ? `<div class="blind-tags">${dnaTags.map(t => `<span class="blind-tag">${escapeHTML(t)}</span>`).join('')}</div>` : ''}
-              `}
-            ` : ''}
-            ${isGame && !isBlindGame ? `
-              ${this._isInLibrary(card) ? `<div class="in-library-badge">🎮 ${this.tr.inLibrary}</div>` : ''}
-              <div class="game-card-badges">
-                ${platformBadges}
-                ${playtimeBadge}
-                ${multiplayerBadge}
-                ${metacriticBadge}
-              </div>
-              <div class="game-card-steam">
-                ${steamTags}
-                ${priceBadge}
-                ${reviewBadge}
-              </div>
-              ${storeButtons}
-            ` : ''}
+            ${this._renderHero(card, isGame, isBook, coverStyle)}
+            ${this._renderSide(card, isBlind, isBlindGame, t, genreStr, wildcardHook, wildcardBridge)}
+            ${this._renderBlindDate(card, isBlind, isBlindGame, dnaTags, wildcard, wildcardHook, wildcardMood, wildcardPacing, wildcardTropes)}
+            ${this._renderGameExtras(card)}
+            <div class="linger-preview"></div>
             <span class="swipe-stamp swipe-stamp-like">${this.tr.like}</span>
             <span class="swipe-stamp swipe-stamp-nope">${this.tr.nope}</span>
             <span class="swipe-hint swipe-hint-like">${this.tr.like}</span>
@@ -1739,6 +1772,7 @@ class App {
             <button class="card-info-btn" data-action="info" aria-label="${this.tr.whySeeing}">ℹ️</button>
           </div>
         </div>
+        ${this._renderKeyboardHints()}
         <div class="swipe-actions">
           <button class="btn btn-nope" aria-label="${this.tr.nope}" title="${this.tr.nope}">✕</button>
           <button class="btn btn-skip" aria-label="${this.tr.skip}" title="${this.tr.skip}">⏭</button>
@@ -1759,9 +1793,11 @@ class App {
       const hp = this._setupHoverPreview(cardEl, card);
       const ag = this._setupAmbientGlow(cardEl, card);
       const tl = this._setupTiltEffect(cardEl);
+      const lp = this._setupLingerPreview(cardEl, card);
       if (hp) this._cardCleanupFns.push(hp);
       if (ag && isGame) this._cardCleanupFns.push(ag);
       if (tl && isGame) this._cardCleanupFns.push(tl);
+      if (lp) this._cardCleanupFns.push(lp);
     }
 
     app.querySelector('.btn-like')?.addEventListener('click', () => this.handleSwipe('right'));
@@ -1846,55 +1882,173 @@ class App {
     });
     this._bindNav(app);
 
-    // Long-press to show deep-dive panel (replaces peek overlay)
-    this._setupLongPress(cardEl, card);
+    // Linger preview is handled by LingerGesture in _setupLingerPreview
+    // Prefetch trailer data for next cards in the stack
+    this._prefetchNextCardMedia();
   }
 
-  // ===== LONG-PRESS → DEEP DIVE PANEL =====
-  _setupLongPress(cardEl, card) {
-    let pressTimer = null;
-    let peekShown = false;
-    let startX = 0;
-    let startY = 0;
+  // ===== LINGER PREVIEW (hold gesture → per-media-type preview) =====
+  _setupLingerPreview(cardEl, card) {
+    if (!cardEl) return null;
+    const isGame = card.type === 'game' || card.source === 'igdb';
+    const isBook = this.state.mediaType === 'books';
+    const isTMDB = card.source === 'tmdb' || card.type === 'movie' || card.type === 'tv';
 
-    const startPress = (e) => {
+    const preview = cardEl.querySelector('.linger-preview');
+    if (!preview) return null;
+
+    let previewActive = false;
+    if (!this._lingerHoldGen) this._lingerHoldGen = 0;
+
+    const linger = new LingerGesture(cardEl, () => {
       if (this.swipeEngine?.isSwiping) return;
       if (document.querySelector('.deep-dive-panel')) return;
-      const touch = e.touches ? e.touches[0] : e;
-      startX = touch.clientX;
-      startY = touch.clientY;
-      peekShown = false;
-      pressTimer = setTimeout(() => {
-        peekShown = true;
-        this._openDeepDive(card);
-        clearTimeout(pressTimer);
-        pressTimer = null;
-      }, 400);
-    };
+      if (previewActive) return;
 
-    const cancelPress = (e) => {
-      if (pressTimer) {
-        clearTimeout(pressTimer);
-        pressTimer = null;
+      previewActive = true;
+      this._lingerHoldGen++;
+      const thisHold = this._lingerHoldGen;
+      cardEl.classList.add('linger-active');
+      if (navigator.vibrate) navigator.vibrate(15);
+
+      this._buildLingerPreviewContent(card, preview, isGame, isBook, isTMDB, thisHold);
+      preview.classList.add('active');
+    }, {
+      delay: 450,
+      threshold: 8,
+      enabled: () => !this.swipeEngine?.isSwiping && !document.querySelector('.deep-dive-panel')
+    });
+
+    const dismiss = () => {
+      if (!previewActive) return;
+      previewActive = false;
+      cardEl.classList.remove('linger-active');
+      preview.classList.remove('active');
+      if (this._lingerScreenshotTimer) {
+        clearInterval(this._lingerScreenshotTimer);
+        this._lingerScreenshotTimer = null;
       }
+      const iframe = preview.querySelector('iframe');
+      if (iframe) iframe.src = '';
+      setTimeout(() => { preview.innerHTML = ''; }, 300);
     };
 
-    const moveCancel = (e) => {
-      if (!pressTimer) return;
-      const touch = e.touches ? e.touches[0] : e;
-      const dx = Math.abs(touch.clientX - startX);
-      const dy = Math.abs(touch.clientY - startY);
-      if (dx > 10 || dy > 10) {
-        if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    cardEl.addEventListener('touchend', dismiss, { passive: true });
+    cardEl.addEventListener('touchcancel', dismiss, { passive: true });
+    cardEl.addEventListener('mouseup', dismiss);
+    cardEl.addEventListener('mouseleave', dismiss);
+
+    const cleanup = () => {
+      linger.destroy();
+      dismiss();
+      cardEl.removeEventListener('touchend', dismiss);
+      cardEl.removeEventListener('touchcancel', dismiss);
+      cardEl.removeEventListener('mouseup', dismiss);
+      cardEl.removeEventListener('mouseleave', dismiss);
+    };
+
+    return cleanup;
+  }
+
+  _buildLingerPreviewContent(card, preview, isGame, isBook, isTMDB, holdGen) {
+    if (isBook) {
+      const cover = card.cover || '';
+      const firstLine = card.overview ? card.overview.split('.').slice(0, 2).join('.') + '.' : '';
+      preview.innerHTML = `
+        <div class="linger-preview-book">
+          <div class="book-flip-container">
+            <div class="book-page book-page-front" style="background-image:url('${escapeHTML(cover)}')"></div>
+            <div class="book-page book-page-back">
+              <p class="book-page-text">${escapeHTML(firstLine)}</p>
+            </div>
+          </div>
+        </div>`;
+    } else if (isGame) {
+      const screenshots = card.screenshots || [];
+      if (screenshots.length > 0) {
+        const slides = screenshots.slice(0, 5).map((s, i) => {
+          const url = typeof s === 'string' ? s : s.url || s;
+          return `<img class="linger-screenshot${i === 0 ? ' active' : ''}" src="${escapeHTML(url)}" alt="" loading="eager">`;
+        }).join('');
+        preview.innerHTML = `
+          <div class="linger-preview-game">
+            <div class="linger-screenshots">${slides}</div>
+            <div class="linger-screenshot-dots">
+              ${screenshots.slice(0, 5).map((_, i) => `<span class="linger-dot${i === 0 ? ' active' : ''}"></span>`).join('')}
+            </div>
+          </div>`;
+        let idx = 0;
+        const imgs = preview.querySelectorAll('.linger-screenshot');
+        const dots = preview.querySelectorAll('.linger-dot');
+        this._lingerScreenshotTimer = setInterval(() => {
+          imgs[idx]?.classList.remove('active');
+          dots[idx]?.classList.remove('active');
+          idx = (idx + 1) % imgs.length;
+          imgs[idx]?.classList.add('active');
+          dots[idx]?.classList.add('active');
+        }, 1800);
+      } else {
+        preview.innerHTML = `
+          <div class="linger-preview-game">
+            <div class="linger-screenshots">
+              <img class="linger-screenshot active" src="${escapeHTML(card.cover || '')}" alt="">
+            </div>
+          </div>`;
       }
-    };
+    } else if (isTMDB) {
+      const tmdbId = card.tmdb_id || card.id;
+      const mediaType = card.type === 'tv' ? 'tv' : 'movie';
+      preview.innerHTML = `
+        <div class="linger-preview-trailer">
+          <div class="linger-trailer-loading"><span class="linger-spinner"></span></div>
+        </div>`;
+      getTMDBVideos(tmdbId, mediaType, this.lang).then(videos => {
+        if (holdGen !== this._lingerHoldGen) return;
+        if (videos.length > 0 && preview.classList.contains('active')) {
+          const videoId = videos[0].id;
+          preview.innerHTML = `
+            <div class="linger-preview-trailer">
+              <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3" allow="autoplay; encrypted-media" frameborder="0"></iframe>
+            </div>`;
+        } else if (preview.classList.contains('active')) {
+          preview.innerHTML = `
+            <div class="linger-preview-trailer">
+              <div class="linger-no-trailer">🎬</div>
+            </div>`;
+        }
+      }).catch(() => {
+        if (holdGen !== this._lingerHoldGen) return;
+        if (preview.classList.contains('active')) {
+          preview.innerHTML = `
+            <div class="linger-preview-trailer">
+              <div class="linger-no-trailer">🎬</div>
+            </div>`;
+        }
+      });
+    }
+  }
 
-    cardEl.addEventListener('touchstart', startPress, { passive: true });
-    cardEl.addEventListener('touchend', cancelPress, { passive: true });
-    cardEl.addEventListener('touchmove', moveCancel, { passive: true });
-    cardEl.addEventListener('mousedown', startPress);
-    cardEl.addEventListener('mouseup', cancelPress);
-    cardEl.addEventListener('mouseleave', cancelPress);
+  _prefetchNextCardMedia() {
+    if (this._lingerObserver) this._lingerObserver.disconnect();
+    const stack = document.querySelector('.card-stack');
+    if (!stack) return;
+    this._lingerObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const nextCards = this.currentCards.slice(this.currentCardIndex + 1, this.currentCardIndex + 3);
+          nextCards.forEach(c => {
+            const isTMDB = c.source === 'tmdb' || c.type === 'movie' || c.type === 'tv';
+            if (isTMDB) {
+              const tmdbId = c.tmdb_id || c.id;
+              const mediaType = c.type === 'tv' ? 'tv' : 'movie';
+              getTMDBVideos(tmdbId, mediaType, this.lang).catch(() => {});
+            }
+          });
+          this._lingerObserver?.disconnect();
+        }
+      });
+    }, { threshold: 0.5 });
+    this._lingerObserver.observe(stack);
   }
 
   _openDeepDive(card) {

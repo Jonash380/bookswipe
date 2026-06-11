@@ -1,15 +1,14 @@
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
+import { Window } from 'happy-dom';
 
 // Set up minimal DOM
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+const window = new Window({
   url: 'http://localhost',
-  pretendToBeVisual: true,
 });
-global.window = dom.window;
-global.document = dom.window.document;
-global.performance = dom.window.performance;
+global.window = window;
+global.document = window.document;
+global.performance = window.performance;
 global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
 global.cancelAnimationFrame = (id) => clearTimeout(id);
 
@@ -601,6 +600,41 @@ describe('Recommender', () => {
         const item = makeItem('no-dna'); // mediaDNA defaults to null
         const score = rec.score(item);
         assert.equal(score, 50, 'no mediaDNA should give zero vibe bonus');
+      });
+    });
+
+    describe('_getItemYear — era fallback for books', () => {
+      it('should return year when present', () => {
+        assert.equal(rec._getItemYear({ year: 1995 }), 1995);
+        assert.equal(rec._getItemYear({ year: '1984' }), 1984);
+      });
+      it('should fall back to release_date year', () => {
+        assert.equal(rec._getItemYear({ release_date: '1999-05-12' }), 1999);
+        assert.equal(rec._getItemYear({ release_date: '2024' }), 2024);
+      });
+      it('should fall back to first_publish_year for books', () => {
+        assert.equal(rec._getItemYear({ first_publish_year: 1954, type: 'book' }), 1954);
+        assert.equal(rec._getItemYear({ first_publish_year: '1979' }), 1979);
+      });
+      it('should fall back to first_air_date for TV', () => {
+        assert.equal(rec._getItemYear({ first_air_date: '2016-07-15' }), 2016);
+      });
+      it('should prefer year > release_date > first_publish_year', () => {
+        assert.equal(rec._getItemYear({ year: 2000, release_date: '1999', first_publish_year: 1954 }), 2000);
+        assert.equal(rec._getItemYear({ release_date: '1999', first_publish_year: 1954 }), 1999);
+      });
+      it('should return null for items with no year info', () => {
+        assert.equal(rec._getItemYear({}), null);
+        assert.equal(rec._getItemYear(null), null);
+        assert.equal(rec._getItemYear({ year: null, release_date: '' }), null);
+      });
+      it('should apply era penalty for books using first_publish_year', () => {
+        rec.profile.totalSwipes = 10;
+        app.state.eraFilter = 'current'; // [2010, 2026]
+        const book = { id: 'b1', type: 'book', source: 'openlibrary', first_publish_year: 1954, genres: [] };
+        const score = rec.score(book);
+        // 1954 is outside [2010, 2026]: 50 + (-30) = 20
+        assert.equal(score, 20);
       });
     });
 

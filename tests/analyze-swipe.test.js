@@ -1,14 +1,13 @@
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
+import { Window } from 'happy-dom';
 
 // Minimal DOM setup
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+const window = new Window({
   url: 'http://localhost',
-  pretendToBeVisual: true,
 });
-global.window = dom.window;
-global.document = dom.window.document;
+global.window = window;
+global.document = window.document;
 
 // Mock localStorage
 const storageMock = (() => {
