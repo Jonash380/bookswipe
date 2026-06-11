@@ -2029,26 +2029,27 @@ class App {
   }
 
   _prefetchNextCardMedia() {
-    if (this._lingerObserver) this._lingerObserver.disconnect();
-    const stack = document.querySelector('.card-stack');
-    if (!stack) return;
-    this._lingerObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const nextCards = this.currentCards.slice(this.currentCardIndex + 1, this.currentCardIndex + 3);
-          nextCards.forEach(c => {
-            const isTMDB = c.source === 'tmdb' || c.type === 'movie' || c.type === 'tv';
-            if (isTMDB) {
-              const tmdbId = c.tmdb_id || c.id;
-              const mediaType = c.type === 'tv' ? 'tv' : 'movie';
-              getTMDBVideos(tmdbId, mediaType, this.lang).catch(() => {});
-            }
-          });
-          this._lingerObserver?.disconnect();
+    if (this._lingerObserver) { this._lingerObserver.disconnect(); this._lingerObserver = null; }
+    // The card stack is always in viewport once renderCards() has painted it,
+    // so an IntersectionObserver fires immediately and disconnects — defeating
+    // the purpose.  Instead, prefetch directly for the next 2 cards, deferring
+    // the work to an idle callback so it doesn't block the swipe animation.
+    const nextCards = this.currentCards.slice(this.currentCardIndex + 1, this.currentCardIndex + 3);
+    const run = () => {
+      nextCards.forEach(c => {
+        const isTMDB = c.source === 'tmdb' || c.type === 'movie' || c.type === 'tv';
+        if (isTMDB) {
+          const tmdbId = c.tmdb_id || c.id;
+          const mediaType = c.type === 'tv' ? 'tv' : 'movie';
+          getTMDBVideos(tmdbId, mediaType, this.lang).catch(() => {});
         }
       });
-    }, { threshold: 0.5 });
-    this._lingerObserver.observe(stack);
+    };
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(run, { timeout: 2000 });
+    } else {
+      setTimeout(run, 50);
+    }
   }
 
   _openDeepDive(card) {

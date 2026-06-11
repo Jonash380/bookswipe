@@ -82,14 +82,11 @@ export class Recommender {
       score = this._scoreMedia(item, score, s);
     }
 
-    // Cached bonuses: vibe-match, description similarity, and recent bias are
-    // all derived from slowly-changing profile/history. Cache them separately
-    // so that re-renders without profile changes don't recompute the TF-IDF
-    // taste vector on every card.
-    const bonuses = this._getCachedBonuses();
-    score += bonuses.descSim;
-    score += bonuses.recentBias;
-    score += bonuses.vibe;
+    // Ensure profile-level caches (taste vector, recent swipe tags) are
+    // populated before the per-item bonus methods read them.
+    this._getCachedBonuses();
+    score += this._scoreDescriptionSimilarity(item);
+    score += this._scoreRecentBias(item);
 
     // Bayesian shrinkage: pull score toward prior when we have few samples
     // This prevents wild recommendations on cold start
@@ -106,25 +103,40 @@ export class Recommender {
 
   /**
    * Vibe/recency/description-similarity bonuses depend only on the user
-   * profile and history. Cache them per (profile-rev, history-len) and
-   * invalidate when either changes.
+   * profile and history. Cache the expensive taste vector and precomputed
+   * recent swipe tags per (profile-revision, history-length) so that
+   * consecutive score() calls during a single render pass reuse them.
+   *
+   * Per-item bonuses (descSim, recentBias) are still computed in their
+   * respective methods but reuse the cached taste vector / tags.
    */
   _getCachedBonuses() {
     const history = this.app.history || [];
-    const rev = `${this.profile.totalSwipes}|${this.profile.totalSwipes}_${history.length}|${this.profile.likeRatio}`;
+    const rev = `${this.profile.totalSwipes}_${history.length}`;
     if (this._bonusCache && this._bonusCacheRev === rev) {
       return this._bonusCache;
     }
-    // Compute fresh bonuses for both a "null" item (to get the additive deltas)
-    // and a representative item (none — these bonuses are item-agnostic only
-    // when the inputs are profile-derived). Per-item vibe/sim already depend
-    // on item, so we cannot fully cache per-item; this cache just memoizes
-    // the profile-side scaffolding (taste vec) across consecutive score() calls.
-    const vec = this._buildTasteVector();
-    this._bonusCache = { descSim: 0, recentBias: 0, vibe: 0 };
+    // Build taste vector from liked-item descriptions (expensive: TF-IDF vec)
+    const tasteVec = this._buildTasteVector();
+    // Precompute recent swipe tags for _scoreRecentBias (cheap but repeated)
+    const recentSwipeTags = [];
+    const recent = history.slice(0, 6);
+    const decay = 0.7;
+    for (let i = 0; i < recent.length; i++) {
+      const hDna = recent[i].mediaDNA || {};
+      const tags = new Set([
+        ...(hDna.tropes || []),
+        ...(hDna.pacing || []),
+        ...(hDna.aesthetic || [])
+      ]);
+      recentSwipeTags.push({
+        weight: Math.pow(decay, i),
+        action: recent[i].action,
+        tags
+      });
+    }
+    this._bonusCache = { tasteVec, recentSwipeTags };
     this._bonusCacheRev = rev;
-    // Touch vec so the cache key is meaningful for the next item
-    void vec;
     return this._bonusCache;
   }
 
@@ -265,6 +277,7 @@ export class Recommender {
    * Build a taste keyword vector from descriptions of liked items.
    * Returns a Map<word, weight> where weight reflects how often the word
    * appears across liked items, weighted by recency.
+   * Cache is invalidated via clear() and _getCachedBonuses().
    */
   _buildTasteVector() {
     if (this._tasteVec) return this._tasteVec;
@@ -286,12 +299,16 @@ export class Recommender {
   /**
    * Score how well an item's description matches the user's taste vector.
    * Uses a lightweight cosine-similarity-inspired approach (dot product of
-   * shared term weights). Returns a small bonus (±5 max).
+   * shared term weights). Returns a small bonus (0–5).
+   *
+   * Reuses the taste vector cached by _getCachedBonuses() so consecutive
+   * score() calls don't rebuild the TF-IDF vector.
    */
   _scoreDescriptionSimilarity(item) {
     const desc = item.overview || item.description || '';
     if (desc.length < 15) return 0;
-    const vec = this._buildTasteVector();
+    // Prefer cache populated by _getCachedBonuses(); fall back to direct build
+    const vec = (this._bonusCache && this._bonusCache.tasteVec) || this._buildTasteVector();
     if (vec.size === 0) return 0;
     const words = desc.toLowerCase().split(WORD_RE).filter(w => w.length > 2 && !STOP_WORDS.has(w));
     let dotProduct = 0;
@@ -311,12 +328,38 @@ export class Recommender {
    * Recent action bias (HMM-lite).
    * Boosts items that share DNA tags with the user's last few swipes,
    * with exponential decay so recent actions matter more.
-   * Returns a small bonus (±4 max).
-   */
+   * Returns a small bonus (−4 to +4).
+   *
+   * Reuses the precomputed recentSwipeTags from _getCachedBonuses()
+   * so consecutive score() calls skip the Set construction.
+   * Falls back to direct history computation when cache is not populated
+   * (e.g. when called directly from generateMatchDNA).*/
   _scoreRecentBias(item) {
-    const history = this.app.history || [];
-    if (history.length < 2) return 0;
-    const recent = history.slice(0, 6);
+    // Prefer precomputed cache from _getCachedBonuses()
+    const recentEntries = this._bonusCache?.recentSwipeTags;
+    // If cache is populated, use it; otherwise fall back to history
+    let entries;
+    if (recentEntries && recentEntries.length > 0) {
+      entries = recentEntries;
+    } else {
+      const history = this.app.history || [];
+      if (history.length < 2) return 0;
+      const recent = history.slice(0, 6);
+      const decay = 0.7;
+      entries = recent.map((h, i) => {
+        const hDna = h.mediaDNA || {};
+        return {
+          weight: Math.pow(decay, i),
+          action: h.action,
+          tags: new Set([
+            ...(hDna.tropes || []),
+            ...(hDna.pacing || []),
+            ...(hDna.aesthetic || [])
+          ])
+        };
+      });
+    }
+
     const dna = item.mediaDNA || {};
     const itemTags = new Set([
       ...(dna.tropes || []),
@@ -324,22 +367,15 @@ export class Recommender {
       ...(dna.aesthetic || [])
     ]);
     if (itemTags.size === 0) return 0;
+
     let bonus = 0;
-    const decay = 0.7;
-    recent.forEach((h, i) => {
-      const weight = Math.pow(decay, i);
-      const hDna = h.mediaDNA || {};
-      const hTags = new Set([
-        ...(hDna.tropes || []),
-        ...(hDna.pacing || []),
-        ...(hDna.aesthetic || [])
-      ]);
+    for (const entry of entries) {
       let overlap = 0;
-      for (const t of itemTags) { if (hTags.has(t)) overlap++; }
+      for (const t of itemTags) { if (entry.tags.has(t)) overlap++; }
       if (overlap > 0) {
-        bonus += (h.action === 'like' ? 1 : -0.5) * overlap * weight;
+        bonus += (entry.action === 'like' ? 1 : -0.5) * overlap * entry.weight;
       }
-    });
+    }
     return Math.min(4, Math.max(-4, bonus));
   }
 
@@ -671,6 +707,10 @@ export class Recommender {
     const breakdown = [];
     let hardNo = false;
     const de = (this.app && this.app.lang === 'de');
+
+    // Warm caches so the direct _scoreDescriptionSimilarity / _scoreRecentBias
+    // calls below reuse the taste vector and precomputed recent swipe tags.
+    this._getCachedBonuses();
 
     // ---- 1. Genre Alignment ----
     let genreScore = 50;
@@ -2149,5 +2189,10 @@ export class Recommender {
 
     return [...swiped, ...reranked];
   }
-  clear() { this.cache.clear(); this._tasteVec = null; }
+  clear() {
+    this.cache.clear();
+    this._tasteVec = null;
+    this._bonusCache = null;
+    this._bonusCacheRev = null;
+  }
 }
