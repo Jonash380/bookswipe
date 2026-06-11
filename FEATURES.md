@@ -68,7 +68,7 @@ BookSwipe presents media cards in a stack. Users **swipe right** to like, **left
 |-------|-----------|
 | Frontend | Vanilla HTML/CSS/JS (ES Modules, no bundler, no framework) |
 | Backend | Python 3 HTTP server (`server.py`) with API proxying |
-| Storage | IndexedDB (watchlist, history, profile), localStorage (UI state) |
+| Storage | IndexedDB (watchlist, disliked, history, tags, enriched items, profile), localStorage (UI state, trailer cache) |
 | DOM (tests) | happy-dom |
 | Testing | Node.js built-in test runner (`node --test`) |
 | E2E | Playwright |
