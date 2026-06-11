@@ -8,9 +8,9 @@ const window = new Window({
 });
 global.window = window;
 global.document = window.document;
-global.HTMLElement = dom.window.HTMLElement;
+global.HTMLElement = window.HTMLElement;
 global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
-global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
+global.HTMLIFrameElement = window.HTMLIFrameElement;
 
 // Mock matchMedia (default: no reduced motion, has hover)
 global.window.matchMedia = (query) => ({
@@ -136,7 +136,7 @@ describe('setupCardPreview', () => {
       });
 
       // Trigger mouseenter
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
 
       // Wait for hover timer + async getVideoId
       await new Promise(r => originalSetTimeout(r, 50));
@@ -164,7 +164,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(coverEl.style.opacity, '0', 'cover should be faded out');
@@ -182,7 +182,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.ok(cardEl.classList.contains('preview-active'), 'should have preview-active class');
@@ -199,11 +199,11 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.ok(cardEl.querySelector('iframe'), 'iframe should exist');
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseleave'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseleave'));
       assert.ok(!cardEl.classList.contains('preview-active'), 'should remove preview-active');
       assert.equal(coverEl.style.opacity, '1', 'cover should be restored');
     });
@@ -223,7 +223,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(cardEl.querySelector('iframe'), null, 'no iframe should be created');
@@ -243,7 +243,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(cardEl.querySelector('iframe'), null, 'no iframe on error');
@@ -265,7 +265,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const loader = cardEl.querySelector('.genre-card-video-loader');
@@ -284,7 +284,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(cardEl.querySelector('.genre-card-video-loader'), null, 'no loader');
@@ -305,7 +305,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: true,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const muteBtn = cardEl.querySelector('.genre-card-mute-btn');
@@ -325,7 +325,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(cardEl.querySelector('.genre-card-mute-btn'), null, 'no mute button');
@@ -400,7 +400,7 @@ describe('setupCardPreview', () => {
         insertBeforeEl: overlay,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const iframe = cardEl.querySelector('iframe');
@@ -424,7 +424,7 @@ describe('setupCardPreview', () => {
         insertBeforeEl: null,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const iframe = cardEl.querySelector('iframe');
@@ -455,7 +455,7 @@ describe('setupCardPreview', () => {
 
       assert.equal(activeCardRef.card, null, 'initially null');
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       assert.equal(activeCardRef.card, cardEl, 'should track active card');
@@ -475,7 +475,7 @@ describe('setupCardPreview', () => {
         activeCardRef,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.equal(activeCardRef.card, cardEl);
 
@@ -508,12 +508,12 @@ describe('setupCardPreview', () => {
       });
 
       // Start card1
-      card1.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      card1.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.ok(card1.querySelector('iframe'), 'card1 should have iframe');
 
       // Start card2 — should stop card1
-      card2.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      card2.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.ok(card2.querySelector('iframe'), 'card2 should have iframe');
       assert.equal(activeCardRef.card, card2, 'active should be card2');
@@ -534,7 +534,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.ok(cardEl.querySelector('iframe'), 'iframe exists before cleanup');
 
@@ -553,7 +553,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       cleanup();
@@ -571,7 +571,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: true,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       cleanup();
@@ -592,7 +592,7 @@ describe('setupCardPreview', () => {
         activeCardRef,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
       assert.equal(activeCardRef.card, cardEl);
 
@@ -615,7 +615,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       // Immediately stop before 500ms delay
       stopPreview();
       // Wait past the delay
@@ -640,7 +640,7 @@ describe('setupCardPreview', () => {
         iframeClassName: 'custom-preview-iframe',
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const iframe = cardEl.querySelector('iframe');
@@ -659,7 +659,7 @@ describe('setupCardPreview', () => {
         showMuteBtn: false,
       });
 
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const iframe = cardEl.querySelector('iframe');
@@ -697,9 +697,9 @@ describe('setupCardPreview', () => {
       });
 
       // Rapid mouseenter/mouseleave/mouseenter
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseleave'));
-      cardEl.dispatchEvent(new dom.window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseleave'));
+      cardEl.dispatchEvent(new window.MouseEvent('mouseenter'));
       await new Promise(r => originalSetTimeout(r, 50));
 
       const iframes = cardEl.querySelectorAll('iframe');

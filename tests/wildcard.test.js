@@ -182,15 +182,20 @@ describe('pickWildcard — Filter Bubble Breaker', () => {
   // ================================================================
 
   describe('Cold start — empty profile', () => {
-    it('should return null on cold start (no genre weights, no structural DNA)', () => {
-      // With no genre weights, rareGenres is empty -> all items score -999
+    it('should return a wildcard on cold start (via pool-frequency fallback)', () => {
+      // Cold start: no genre weights -> pool-frequency fallback identifies rare
+      // genres from the item pool itself. With 3 different genres, each appears
+      // on 33% of items (>20% threshold), so ALL genres become "rare" via the
+      // last-resort fallback and a wildcard is returned.
       const items = [
         makeItem('a', { genres: [28] }),
         makeItem('b', { genres: [12] }),
         makeItem('c', { genres: [35] }),
       ];
       const result = rec.pickWildcard(items);
-      assert.equal(result, null, 'no wildcard on cold start with empty profile');
+      assert.ok(result !== null, 'cold start should return a wildcard via pool-frequency fallback');
+      assert.ok(result.wildcard_title, 'should have a title');
+      assert.ok(result.actual_genre, 'should have a genre');
     });
 
     it('should try structural matching with genre weights and matching DNA', () => {
@@ -678,7 +683,10 @@ describe('pickWildcard — Filter Bubble Breaker', () => {
       assert.doesNotThrow(() => rec.pickWildcard(items), 'should not crash');
     });
 
-    it('should return null when all items are from the same genre and user has no preferences', () => {
+    it('should return a wildcard on homogeneous pool via last-resort fallback', () => {
+      // All items share the same genre — every genre appears on 100% of items
+      // (>20% threshold). The last-resort fallback treats all genres as "rare"
+      // so the wildcard still works.
       rec.profile.genreWeights = {};
       rec.profile.totalSwipes = 0;
 
@@ -688,7 +696,8 @@ describe('pickWildcard — Filter Bubble Breaker', () => {
         makeItem('c', { genres: [28] }),
       ];
       const result = rec.pickWildcard(items);
-      assert.equal(result, null, 'no wildcard when all items are same genre with no preferences');
+      assert.ok(result !== null, 'homogeneous pool should still return a wildcard');
+      assert.equal(result.actual_genre, 'Action');
     });
   });
 

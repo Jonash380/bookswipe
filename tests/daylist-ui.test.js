@@ -2,8 +2,8 @@ import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 
-// ---- Set up jsdom environment ----
-const dom = new JSDOM('<!DOCTYPE html><div id="app"></div>', {
+// ---- Set up happy-dom environment ----
+const window = new Window({
   url: 'http://localhost',
 });
 global.window = window;
@@ -19,6 +19,7 @@ Object.defineProperty(global, 'navigator', {
 });
 global.window.getComputedStyle = () => ({});
 global.window.location = new URL('http://localhost');
+document.body.innerHTML = '<div id="app"></div>';
 
 // Provide Image constructor (used by portal cover probing in app.js)
 globalThis.Image = class Image { constructor() {} set src(v) {} set onerror(fn) {} };
@@ -53,7 +54,7 @@ const { App } = await import('../js/app.js');
  * Helper: dispatch a keydown event.
  */
 function keydown(key) {
-  const evt = new dom.window.KeyboardEvent('keydown', { key, bubbles: true });
+  const evt = new window.KeyboardEvent('keydown', { key, bubbles: true });
   document.dispatchEvent(evt);
 }
 
@@ -61,7 +62,7 @@ function keydown(key) {
  * Helper: simulate a click event on an element.
  */
 function click(el) {
-  const evt = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  const evt = new window.MouseEvent('click', { bubbles: true, cancelable: true });
   el.dispatchEvent(evt);
 }
 

@@ -1019,6 +1019,89 @@ describe('Recommender', () => {
   });
 });
 
+describe('pickWildcard — cold-start & homogeneous pool', () => {
+  let app, rec;
+
+  beforeEach(() => {
+    app = makeMockApp();
+    rec = new Recommender(app);
+    resetProfile(rec);
+  });
+
+  afterEach(() => {
+    storageMock.clear();
+  });
+
+  it('returns null when fewer than 3 items', () => {
+    const items = [makeItem(1, { genres: [28] }), makeItem(2, { genres: [35] })];
+    assert.equal(rec.pickWildcard(items), null);
+  });
+
+  it('returns null when items is null or undefined', () => {
+    assert.equal(rec.pickWildcard(null), null);
+    assert.equal(rec.pickWildcard(undefined), null);
+  });
+
+  it('returns a wildcard result on cold start (no genre weights) with diverse items', () => {
+    // Cold start: profile.genreWeights is empty
+    const items = [
+      makeItem(1, { genres: [28] }),   // Action
+      makeItem(2, { genres: [35] }),   // Comedy
+      makeItem(3, { genres: [27] }),   // Horror
+      makeItem(4, { genres: [10749] }), // Romance
+      makeItem(5, { genres: [878] }),  // Sci-Fi
+    ];
+    const result = rec.pickWildcard(items);
+    assert.ok(result !== null, 'should return a wildcard on cold start with diverse pool');
+    assert.ok(result.wildcard_title, 'should have wildcard_title');
+    assert.ok(result.actual_genre, 'should have actual_genre');
+    assert.ok(result.the_hook, 'should have the_hook');
+    assert.ok(result.the_bridge, 'should have the_bridge');
+  });
+
+  it('returns a wildcard on homogeneous pool (all same genre) via last-resort fallback', () => {
+    // All items have the same genre — every genre appears on 100% of items
+    // (well above the 20% threshold). The last-resort fallback should treat
+    // all genres as "rare" so pickWildcard still returns a result.
+    const items = [
+      makeItem(1, { genres: [28], overview: 'A hero rises against all odds in a dark world' }),
+      makeItem(2, { genres: [28], overview: 'A warrior fights for survival in a dangerous land' }),
+      makeItem(3, { genres: [28], overview: 'An unlikely champion battles evil forces' }),
+      makeItem(4, { genres: [28], overview: 'A lone fighter takes on a powerful empire' }),
+      makeItem(5, { genres: [28], overview: 'Two rivals must work together to save the world' }),
+    ];
+    const result = rec.pickWildcard(items);
+    assert.ok(result !== null, 'should return a wildcard even when all items share the same genre');
+    assert.ok(result.wildcard_title, 'should have a wildcard_title');
+    assert.equal(result.actual_genre, 'Action');
+  });
+
+  it('returns a wildcard on cold start with homogeneous pool AND no structural DNA', () => {
+    // Worst case: empty profile + all items have same genre + no mediaDNA
+    const items = [
+      makeItem(1, { genres: [35], tags: ['funny'] }),
+      makeItem(2, { genres: [35], tags: ['witty'] }),
+      makeItem(3, { genres: [35], tags: ['slapstick'] }),
+    ];
+    const result = rec.pickWildcard(items);
+    assert.ok(result !== null, 'should return a wildcard even in worst-case cold start');
+  });
+
+  it('prefers items with structural DNA match even on cold start', () => {
+    // Give profile some structural preference (tropes) but no genre weights
+    rec.profile.tropes.revenge = 5;
+    const items = [
+      makeItem(1, { genres: [28], mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [] } }),
+      makeItem(2, { genres: [35], mediaDNA: { tropes: ['found_family'], pacing: [], aesthetic: [] } }),
+      makeItem(3, { genres: [27], mediaDNA: { tropes: ['survival'], pacing: [], aesthetic: [] } }),
+    ];
+    const result = rec.pickWildcard(items);
+    assert.ok(result !== null);
+    // With structural DNA match, the item with 'revenge' trope should score well
+    // even though it's in the genre the user hasn't explicitly liked/disliked
+  });
+});
+
 describe('rescoreQueue', () => {
   let app, rec;
 

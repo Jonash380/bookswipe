@@ -1687,9 +1687,35 @@ export class Recommender {
       .map(([name]) => name.toLowerCase());
 
     // If there are no explicitly disliked genres, take the bottom quartile
-    const rareGenres = lowWeightGenres.length > 0
+    let rareGenres = lowWeightGenres.length > 0
       ? lowWeightGenres
       : weightEntries.slice(0, Math.max(1, Math.floor(weightEntries.length / 4))).map(([name]) => name.toLowerCase());
+
+    // Cold-start fallback: if profile has no genre weights at all, derive
+    // "rare" genres from the item pool itself — pick genres that appear
+    // least often so the wildcard still introduces variety.
+    if (rareGenres.length === 0 && items.length > 0) {
+      const poolGenreCounts = new Map();
+      for (const it of items) {
+        const gNames = (it.genres || []).map(g => {
+          if (typeof g === 'string') return g;
+          const id = typeof g === 'number' ? g : g.id || g;
+          return (gm[id] || String(id)).toLowerCase();
+        });
+        for (const g of gNames) poolGenreCounts.set(g, (poolGenreCounts.get(g) || 0) + 1);
+      }
+      // Rare = genres that appear on ≤20% of items (or at most 1 item)
+      const threshold = Math.max(1, Math.floor(items.length * 0.2));
+      rareGenres = [...poolGenreCounts]
+        .filter(([, count]) => count <= threshold)
+        .map(([name]) => name);
+
+      // Last resort: if every genre appears on >20% of items, treat all
+      // genres as "rare" so the wildcard still works on homogeneous pools.
+      if (rareGenres.length === 0) {
+        rareGenres = [...poolGenreCounts].map(([name]) => name);
+      }
+    }
 
     // ---- 2. Find user's top structural DNA (pacing, tropes, aesthetics) ----
     const topTropes = this.getTopTropes(4);

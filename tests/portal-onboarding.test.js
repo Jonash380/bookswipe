@@ -34,7 +34,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   writable: true,
   configurable: true,
 });
-Object.defineProperty(dom.window, 'localStorage', {
+Object.defineProperty(window, 'localStorage', {
   value: storageMock,
   writable: true,
   configurable: true,
