@@ -2188,6 +2188,126 @@ export class Recommender {
 
     return [...swiped, ...reranked];
   }
+  /**
+   * Reverse the signal applied by `updateFromConsumed(item, rating)`. Used when
+   * the user removes a consumed item from the library (kebab menu, rating
+   * change to a new value) so the taste vector reflects the removal without
+   * the heavy `clear()` fallback that wipes the entire score cache.
+   *
+   * Rating → inverse multiplier (the exact reverse of updateFromConsumed's mapping):
+   *   1★, 2★ → was -1.5x  → reverse with +1.5x
+   *   3★     → was 0      → no entity update needed (still decrement totalSwipes)
+   *   4★     → was +1.2x  → reverse with -1.2x
+   *   5★     → was +1.5x  → reverse with -1.5x
+   *
+   * @param {Object} item - The media item being removed from consumed
+   * @param {number} rating - 1, 2, 3, 4, or 5 stars (must match the original)
+   */
+  removeFromConsumed(item, rating) {
+    // Guard against stale state: require an item with an id, otherwise the
+    // call has no anchor and would silently corrupt the profile.
+    if (!item || !item.id) {
+      console.warn('[Recommender] removeFromConsumed: item or item.id missing');
+      return;
+    }
+    if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
+      console.warn('[Recommender] removeFromConsumed: rating must be integer 1-5, got', rating);
+      return;
+    }
+
+    // Inverse multiplier (reverse of updateFromConsumed's mapping)
+    let multiplier;
+    if (rating === 1 || rating === 2) multiplier = 1.5;  // was -1.5
+    else if (rating === 3) multiplier = 0;               // was 0
+    else if (rating === 4) multiplier = -1.2;            // was +1.2
+    else /* rating === 5 */     multiplier = -1.5;            // was +1.5
+
+    // Compute confidence using the PRE-decrement totalSwipes (the value that
+    // was current when updateFromConsumed applied the original delta). This
+    // makes the inverse delta magnitude exactly match the original add,
+    // eliminating the cold-start drift that would otherwise leak through
+    // every add+remove cycle.
+    const preDecrement = this.profile.totalSwipes;
+    const confidence = Math.min(1, preDecrement / 20);
+    const baseDelta = 1 + (1 - confidence) * 2;
+    const finalDelta = baseDelta * multiplier;
+
+    // Reverse the totalSwipes++ that updateFromConsumed did
+    this.profile.totalSwipes = Math.max(0, this.profile.totalSwipes - 1);
+
+    if (multiplier === 0) {
+      // 3★: updateFromConsumed was a no-op for entity weights; just persist
+      // the totalSwipes decrement and invalidate caches.
+      this._saveProfile();
+      this.clear();
+      return;
+    }
+
+    this._updateEntityWeights(item, finalDelta);
+
+    // Reverse the warnings increment that updateFromConsumed did for 1-2★
+    // items. _updateEntityWeights only ADDS to warnings on negative deltas,
+    // so a positive inverse-delta would be a no-op there — we must subtract
+    // explicitly. A 1-2★ add bumped each warning by exactly 1, so the remove
+    // subtracts 1.
+    if ((rating === 1 || rating === 2) && item.mediaDNA && Array.isArray(item.mediaDNA.warnings)) {
+      item.mediaDNA.warnings.forEach(w => {
+        this.profile.warnings[w] = Math.max(0, (this.profile.warnings[w] || 0) - 1);
+      });
+    }
+
+    this._saveProfile();
+    this._applyDecay();
+    this.clear();
+  }
+
+  /**
+   * Apply the signal from a "consumed" rating (1-5 stars) to the user profile.
+   * Ratings 1-2 are weighted 1.5x a 'nope' swipe; rating 3 is neutral (a skip);
+   * rating 4 is 1.2x a 'like'; rating 5 is 1.5x a 'like'. The rating-based
+   * signal is treated as a deliberate, lower-friction signal than a swipe
+   * (the user took the time to pick a star), so no time-decay is applied
+   * to consumed weights (see library-spec.md §2).
+   *
+   * @param {Object} item - The media item that was consumed
+   * @param {number} rating - 1, 2, 3, 4, or 5 stars
+   */
+  updateFromConsumed(item, rating) {
+    if (!item) return;
+    if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
+      console.warn('[Recommender] updateFromConsumed: rating must be integer 1-5, got', rating);
+      return;
+    }
+
+    // Map rating → multiplier (negative = dislike, 0 = skip, positive = like)
+    let multiplier;
+    if (rating === 1 || rating === 2) multiplier = -1.5;
+    else if (rating === 3) multiplier = 0;
+    else if (rating === 4) multiplier = 1.2;
+    else /* rating === 5 */     multiplier = 1.5;
+
+    // Counted as a sample so Bayesian shrinkage progresses (3 stars still counts)
+    this.profile.totalSwipes++;
+
+    if (multiplier === 0) {
+      // 3 stars: neutral 'skip' — no entity weight updates, no decay (would erase signal)
+      this._saveProfile();
+      this.clear();
+      return;
+    }
+
+    // Base delta mirrors updateFromSwipe's adaptive learning rate:
+    // larger updates when the user has few swipes, finer adjustments later.
+    const confidence = Math.min(1, this.profile.totalSwipes / 20);
+    const baseDelta = 1 + (1 - confidence) * 2; // range [1, 3]
+    const finalDelta = baseDelta * multiplier;
+
+    this._updateEntityWeights(item, finalDelta);
+    this._saveProfile();
+    this._applyDecay();
+    this.clear();
+  }
+
   clear() {
     this.cache.clear();
     this._tasteVec = null;

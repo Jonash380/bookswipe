@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -e
+export JAVA_HOME=/home/jonas/android-tools
+export ANDROID_HOME=/home/jonas/android-sdk
+export PATH=$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+GRADLE_HOME="$(cd "$(dirname "$0")" && pwd)/gradle-8.5"
+exec "$GRADLE_HOME/bin/gradle" "$@"

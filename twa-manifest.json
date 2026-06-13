@@ -1,0 +1,25 @@
+{
+  "packageId": "com.bookswipe.app",
+  "host": "bookswipe.app",
+  "name": "BookSwipe",
+  "launcherName": "BookSwipe",
+  "display": "standalone",
+  "themeColor": "#0f0f1a",
+  "navigationColor": "#0f0f1a",
+  "backgroundColor": "#0f0f1a",
+  "enableNotifications": true,
+  "enableSiteSettingsShortcut": true,
+  "shortcuts": [],
+  "icon": "./static/icon-512.png",
+  "maskableIcon": "./static/icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  },
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "alphaDependencies": {
+    "enabled": false
+  }
+}

@@ -4,7 +4,7 @@
  * Keeps only UI preferences (language, etc.) in localStorage.
  */
 const DB_NAME = 'bookswipe-v3';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let _dbPromise = null;
 
@@ -21,6 +21,8 @@ function getDB() {
       if (!db.objectStoreNames.contains('tags')) db.createObjectStore('tags');
       if (!db.objectStoreNames.contains('enriched')) db.createObjectStore('enriched');
       if (!db.objectStoreNames.contains('crossMedia')) db.createObjectStore('crossMedia', { keyPath: 'id' });
+      // v2: Library page — items the user has already consumed
+      if (!db.objectStoreNames.contains('consumed')) db.createObjectStore('consumed', { keyPath: 'id' });
     };
     req.onsuccess = (e) => resolve(e.target.result);
     req.onerror = (e) => { console.warn('IndexedDB open error', e); reject(e); };
@@ -118,6 +120,117 @@ export async function getWatchlist() { return getAll('watchlist'); }
 export async function addToWatchlist(item) { return putItem('watchlist', item); }
 export async function removeFromWatchlist(id) { return deleteItem('watchlist', id); }
 
+/**
+ * Consumed — items the user has already read/watched/played, with a 1-5 rating.
+ * Item shape extends the standard item with:
+ *   - consumedRating (number, 1-5) — user's personal rating
+ *   - consumedAt (number) — Unix timestamp when added
+ *   - promotedFromWatchlist (boolean) — true if moved from Want to
+ */
+export async function getConsumed() { return getAll('consumed'); }
+export async function addToConsumed(item, rating, opts = {}) {
+  if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+    console.warn('[Storage] addToConsumed: rating must be integer 1-5, got', rating);
+    return;
+  }
+  const record = {
+    ...item,
+    consumedRating: rating,
+    consumedAt: Date.now(),
+    promotedFromWatchlist: !!opts.promotedFromWatchlist,
+  };
+  return putItem('consumed', record);
+}
+export async function removeFromConsumed(id) { return deleteItem('consumed', id); }
+
+/**
+ * Update the rating of an existing consumed item.
+ * Preserves all other fields (id, consumedAt, etc.).
+ * @param {string} id - The consumed item's id
+ * @param {number} rating - New rating, 1-5
+ * @returns {Promise<Object|null>} The updated record, or null if not found
+ */
+export async function updateConsumedRating(id, rating) {
+  if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+    console.warn('[Storage] updateConsumedRating: rating must be integer 1-5, got', rating);
+    return null;
+  }
+  try {
+    const db = await getDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction('consumed', 'readwrite');
+      const store = tx.objectStore('consumed');
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        const existing = getReq.result;
+        if (!existing) { resolve(null); return; }
+        const updated = { ...existing, consumedRating: rating };
+        const putReq = store.put(updated);
+        putReq.onsuccess = () => resolve(updated);
+        putReq.onerror = () => resolve(null);
+      };
+      getReq.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    console.warn('[Storage] updateConsumedRating failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Get a Set of all consumed item IDs — used for discovery dedup so already-consumed
+ * items never reappear in the swipe deck.
+ * @returns {Promise<Set<string>>}
+ */
+export async function getAllConsumedIds() {
+  const all = await getConsumed();
+  return new Set(all.map(item => item.id));
+}
+
+/**
+ * Atomic helper: move an item from watchlist to consumed in a single transaction.
+ * If the item is not in the watchlist, the consumed write is rolled back.
+ * This prevents the race condition where the same item ends up in both stores.
+ * @param {string} id - The watchlist item id
+ * @param {number} rating - 1-5 stars
+ * @returns {Promise<{moved: boolean, record: Object|null}>}
+ */
+export async function promoteToConsumed(id, rating) {
+  if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+    console.warn('[Storage] promoteToConsumed: rating must be integer 1-5, got', rating);
+    return { moved: false, record: null };
+  }
+  try {
+    const db = await getDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(['watchlist', 'consumed'], 'readwrite');
+      const wlStore = tx.objectStore('watchlist');
+      const coStore = tx.objectStore('consumed');
+      let foundRecord = null;
+      const getReq = wlStore.get(id);
+      getReq.onsuccess = () => {
+        const existing = getReq.result;
+        if (!existing) return; // tx.oncomplete will resolve with moved: false
+        foundRecord = {
+          ...existing,
+          consumedRating: rating,
+          consumedAt: Date.now(),
+          promotedFromWatchlist: true,
+        };
+        coStore.put(foundRecord);
+        wlStore.delete(id);
+      };
+      getReq.onerror = () => resolve({ moved: false, record: null });
+      tx.oncomplete = () => resolve({ moved: !!foundRecord, record: foundRecord });
+      tx.onerror = () => resolve({ moved: false, record: null });
+      tx.onabort = () => resolve({ moved: false, record: null });
+    });
+  } catch (e) {
+    console.warn('[Storage] promoteToConsumed failed:', e);
+    return { moved: false, record: null };
+  }
+}
+
 /** Disliked */
 export async function getDisliked() { return getAll('disliked'); }
 export async function addToDisliked(item) { return putItem('disliked', item); }
@@ -204,6 +317,7 @@ export async function clearAllData() {
   await clearStore('history');
   await clearStore('recProfile');
   await clearStore('crossMedia');
+  await clearStore('consumed');
   localStorage.removeItem('bs-migrated-v3');
   console.log('[Storage] All data cleared');
 }

@@ -42,13 +42,14 @@ Object.defineProperty(window, 'localStorage', {
 
 const { getUIState, setUIState } = await import('../js/storage.js');
 
-// Read app.js source once for all source-parsing tests
+// Read source files once for all source-parsing tests
 const fs = await import('node:fs');
 const nodePath = await import('node:path');
 const appSrc = fs.readFileSync(nodePath.resolve('js/app.js'), 'utf-8');
+const onboardingSrc = fs.readFileSync(nodePath.resolve('js/onboarding.js'), 'utf-8');
+const combinedSrc = appSrc + '\n' + onboardingSrc;
 
-// We can't easily import the LANG constant from app.js (it's not exported),
-// so we replicate the expected keys to verify completeness.
+// Import LANG directly from i18n.js (extracted during module refactoring)
 const PORTAL_KEYS = [
   'portalBooks', 'portalMovies', 'portalTV', 'portalGames',
   'ctaBooks', 'ctaMovies', 'ctaTV', 'ctaGames',
@@ -258,8 +259,9 @@ describe('Onboarding — Step Flow Logic', () => {
 describe('LANG Keys — Portal & Vibe Matrix', () => {
   // Extract LANG object from app.js source using regex + Function constructor
   // NOTE: Assumes LANG is the first multi-line const ending with `};` in app.js
-  const langMatch = appSrc.match(/const LANG\s*=\s*(\{[\s\S]*?\n\};)/);
-  if (!langMatch) throw new Error('Could not extract LANG from app.js');
+  const i18nSrc = fs.readFileSync(nodePath.resolve('js/i18n.js'), 'utf-8');
+  const langMatch = i18nSrc.match(/const LANG\s*=\s*(\{[\s\S]*?\n\};)/);
+  if (!langMatch) throw new Error('Could not extract LANG from i18n.js');
   const LANG = new Function(`return ${langMatch[1]}`)();
 
   it('should have all portal keys in DE', () => {
@@ -341,78 +343,78 @@ describe('Default State — Portal & Vibe', () => {
 describe('Onboarding — Step Routing Logic', () => {
   it('should route step 0 to _renderWelcomeScreen (portal)', () => {
     assert.ok(
-      appSrc.includes("if (step === 0) return this._renderWelcomeScreen(app)"),
+      combinedSrc.includes("if (step === 0) return this._renderWelcomeScreen(app)"),
       'Step 0 should route to portal welcome screen'
     );
   });
 
   it('should route step 1 to _renderVibeMatrixScreen', () => {
     assert.ok(
-      appSrc.includes("if (step === 1) return this._renderVibeMatrixScreen(app)"),
+      combinedSrc.includes("if (step === 1) return this._renderVibeMatrixScreen(app)"),
       'Step 1 should route to vibe matrix'
     );
   });
 
   it('should route step 2 to _renderWhoWatchingScreen', () => {
     assert.ok(
-      appSrc.includes("if (step === 2) return this._renderWhoWatchingScreen(app)"),
+      combinedSrc.includes("if (step === 2) return this._renderWhoWatchingScreen(app)"),
       'Step 2 should route to who-watching'
     );
   });
 
   it('should route step 3 to platform screen for games', () => {
     assert.ok(
-      appSrc.includes("if (step === 3 && this.state.mediaType === 'games') return this._renderPlatformScreen(app)"),
+      combinedSrc.includes("if (step === 3 && this.state.mediaType === 'games') return this._renderPlatformScreen(app)"),
       'Step 3 should route to platform screen for games'
     );
   });
 
   it('should route step 3 to rapid-fire for non-games', () => {
     assert.ok(
-      appSrc.includes("if (step === 3 && this.state.mediaType !== 'games') return this._renderRapidFireScreen(app)"),
+      combinedSrc.includes("if (step === 3 && this.state.mediaType !== 'games') return this._renderRapidFireScreen(app)"),
       'Step 3 should route to rapid-fire for non-games'
     );
   });
 
   it('should route step 4 to rapid-fire for games', () => {
     assert.ok(
-      appSrc.includes("if (step === 4 && this.state.mediaType === 'games') return this._renderRapidFireScreen(app)"),
+      combinedSrc.includes("if (step === 4 && this.state.mediaType === 'games') return this._renderRapidFireScreen(app)"),
       'Step 4 should route to rapid-fire for games'
     );
   });
 
   it('should advance from portal (step 0) to vibe matrix (step 1)', () => {
     assert.ok(
-      appSrc.includes('this.state.onboardingStep = 1; // vibe matrix'),
+      combinedSrc.includes('this.state.onboardingStep = 1; // vibe matrix'),
       'Portal should advance to step 1 (vibe matrix)'
     );
   });
 
   it('should advance from vibe matrix (step 1) to who-watching (step 2)', () => {
     assert.ok(
-      appSrc.includes('this.state.onboardingStep = 2;') &&
-      appSrc.includes("this._renderVibeMatrixScreen"),
+      combinedSrc.includes('this.state.onboardingStep = 2;') &&
+      combinedSrc.includes("this._renderVibeMatrixScreen"),
       'Vibe matrix should advance to step 2'
     );
   });
 
   it('should advance from who-watching (step 2) to step 3', () => {
     assert.ok(
-      appSrc.includes('this.state.onboardingStep = 3;'),
+      combinedSrc.includes('this.state.onboardingStep = 3;'),
       'Who-watching should advance to step 3'
     );
   });
 
   it('should advance from platform screen (step 3) to rapid-fire (step 4)', () => {
     assert.ok(
-      appSrc.includes('this.state.onboardingStep = 4;'),
+      combinedSrc.includes('this.state.onboardingStep = 4;'),
       'Platform screen should advance to step 4'
     );
   });
 
   it('should set hasCompletedOnboarding when rapid-fire completes', () => {
     assert.ok(
-      appSrc.includes('this.state.hasCompletedOnboarding = true;'),
+      combinedSrc.includes('this.state.hasCompletedOnboarding = true;'),
       'Rapid-fire completion should set hasCompletedOnboarding to true'
     );
   });
@@ -451,23 +453,23 @@ describe('Vibe Matrix — Slider Mechanics', () => {
 
 describe('Portal — Aesthetic Mapping', () => {
   it('should define particle spawners for all 4 media types', () => {
-    assert.ok(appSrc.includes("books: spawnDustMotes"), 'Books should use dust motes');
-    assert.ok(appSrc.includes("movies: spawnGrain"), 'Movies should use film grain');
-    assert.ok(appSrc.includes("tv: spawnScanlines"), 'TV should use scanlines');
-    assert.ok(appSrc.includes("games: spawnPixels"), 'Games should use pixels');
+    assert.ok(combinedSrc.includes("books: spawnDustMotes"), 'Books should use dust motes');
+    assert.ok(combinedSrc.includes("movies: spawnGrain"), 'Movies should use film grain');
+    assert.ok(combinedSrc.includes("tv: spawnScanlines"), 'TV should use scanlines');
+    assert.ok(combinedSrc.includes("games: spawnPixels"), 'Games should use pixels');
   });
 
   it('should define particle CSS classes for all 4 media types', () => {
-    assert.ok(appSrc.includes("books: 'portal-dust'"), 'Books particle class');
-    assert.ok(appSrc.includes("movies: 'portal-grain'"), 'Movies particle class');
-    assert.ok(appSrc.includes("tv: 'portal-scanlines'"), 'TV particle class');
-    assert.ok(appSrc.includes("games: 'portal-pixels'"), 'Games particle class');
+    assert.ok(combinedSrc.includes("books: 'portal-dust'"), 'Books particle class');
+    assert.ok(combinedSrc.includes("movies: 'portal-grain'"), 'Movies particle class');
+    assert.ok(combinedSrc.includes("tv: 'portal-scanlines'"), 'TV particle class');
+    assert.ok(combinedSrc.includes("games: 'portal-pixels'"), 'Games particle class');
   });
 
   it('should define 4 portal card types', () => {
-    assert.ok(appSrc.includes("key: 'books'"), 'Portal has books card');
-    assert.ok(appSrc.includes("key: 'movies'"), 'Portal has movies card');
-    assert.ok(appSrc.includes("key: 'tv'"), 'Portal has TV card');
-    assert.ok(appSrc.includes("key: 'games'"), 'Portal has games card');
+    assert.ok(combinedSrc.includes("key: 'books'"), 'Portal has books card');
+    assert.ok(combinedSrc.includes("key: 'movies'"), 'Portal has movies card');
+    assert.ok(combinedSrc.includes("key: 'tv'"), 'Portal has TV card');
+    assert.ok(combinedSrc.includes("key: 'games'"), 'Portal has games card');
   });
 });

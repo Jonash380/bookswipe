@@ -1,17 +1,16 @@
-import { escapeHTML, shuffleArray, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON, safeSetJSON, getGenreIcon, createImageWithFallback } from './utils.js';
-import { BOOK_GENRES, BOOK_MOODS, BOOK_QUIZ, ERA_FILTERS, BOOK_SEARCH, COVER_PLACEHOLDERS } from './books.js';
-import { MEDIA_GENRES, MEDIA_MOODS, MEDIA_VIBES } from './media.js';
-import { GAME_GENRES, GAME_GENRE_NAME_MAP, GAME_MOODS, GAME_MECHANICS, GAME_PLATFORMS, GAME_PACING, PLAYTIME_RANGES, MULTIPLAYER_TYPES, GAME_STATUS, ICONIC_GAMES, GAME_SEARCH } from './games.js';
+import { escapeHTML, TMDB_GENRE_MAP, getTMDBGenreMap, safeGetJSON, safeSetJSON, getGenreIcon, createImageWithFallback } from './utils.js';
+import { BOOK_GENRES, BOOK_MOODS } from './books.js';
+import { MEDIA_GENRES, MEDIA_MOODS } from './media.js';
+import { GAME_GENRES, GAME_MOODS } from './games.js';
 import { fetchBooks, fetchUpcomingBooks, fetchUpcomingMedia, mapTmdbResult } from './api.js';
 import { SwipeEngine } from './swipe.js';
 import { LingerGesture } from './ling-gesture.js';
 import { DeepDivePanel } from './deep-dive.js';
 import { EnrichmentWorker } from './enrichment.js';
 import { Recommender } from './recommender.js';
-import { getTMDBDetails, searchTMDB, getTMDBVideos } from './tmdb.js';
-import { renderVibeBars, detectSpoilers, generateElevatorPitchFull } from './descriptions.js';
-import { mapTMDBTags, computeVibeScores, mapGameTags, mapMediaDNA } from './tag_mapper.js';
-import { searchGames, fetchGamesByGenre, fetchPopularGames, fetchGamesForDiscovery, enrichGamesWithSteam } from './games_api.js';
+import { getTMDBVideos } from './tmdb.js';
+import { mapMediaDNA } from './tag_mapper.js';
+import { searchGames, fetchGamesForDiscovery, enrichGamesWithSteam } from './games_api.js';
 import {
   migrateFromLocalStorage,
   getWatchlist, addToWatchlist, removeFromWatchlist,
@@ -19,170 +18,21 @@ import {
   getHistory, addToHistory, removeLastHistory,
   getRecProfile, saveRecProfile,
   getUIState, setUIState,
-  getFullWatchlist
+  getFullWatchlist,
+  // LIB-002: consumed (Library page) storage wiring
+  getConsumed, addToConsumed, removeFromConsumed,
+  updateConsumedRating, getAllConsumedIds, promoteToConsumed
 } from './storage.js';
 import { createAbortable, getErrorMessage, fetchDeduped } from './api-client.js';
-import { showToast, dismissToast, clearAllToasts } from './toast.js';
+import { showToast } from './toast.js';
 import { ABTest } from './experiment.js';
+import { LANG, WATCH_MODES, PERSONA_BADGES, STREAMING_PROVIDERS, CROSS_MEDIA_GENRES } from './i18n.js';
+import { OnboardingMixin } from './onboarding.js';
+import { GameUIMixin } from './game-ui.js';
+import { ModalsMixin } from './modals.js';
+import { DailyTop5, StreakTracker, STREAK_CONFETTI, localDateKey } from './retention.js';
 
-// ===== CONSTANTS =====
-const LANG = {
-  de: {
-    title:'BookSwipe', subtitle:'Buecher, Filme & Spiele', skip:'Skip', like:'Gefaellt mir',
-    nope:'Nix fuer mich', discover:'Entdecken', onboarding:'Willkommen!', quiz:'Quiz', swipe:'Wischen',
-    history:'Verlauf', watchlist:'Merkliste', stats:'Stats', empty:'Nichts gefunden', loading:'Laden...',
-    age:'Alter', lang:'Sprache', dark:'Dunkel', light:'Hell', yes:'Ja', no:'Nein', export:'Export',
-    share:'Teilen', whoWatching:'Wer schaut zu?', solo:'Allein', dateNight:'Date Night', family:'Familie',
-    blindDate:'Blind Date', rapidFire:'Schnelltest', whoWatchingSub:'Fuer bessere Empfehlungen',
-    familySub:'Horror und Crime raus automatisch', dateNightSub:'Romance & Thriller hoch',
-    soloSub:'Du hast die Kontrolle', moodTime:'Stimmung + Zeit', moodTimeTitle:'Was moechtest du spielen?',
-    moodTimeSub:'Waehle deine Stimmung und verfuegbare Zeit',
-    quickPlay:'Kurz (15-30 Min)', mediumPlay:'Mittel (1-2 Std)', longPlay:'Lang (3+ Std)', anyPlay:'Egal',
-    cozy:'Gemütlich', intense:'Intensiv', chill:'Entspannt', competitive:'Kompetitiv',
-    applyFilter:'Anwenden', clearFilter:'Zuruecksetzen', filterActive:'Filter aktiv',
-    steamLibrary:'Steam Bibliothek', steamImport:'Importieren', steamId:'Steam ID',
-    steamApiKey:'Steam API Key', steamImporting:'Importiere...', steamImported:'Importiert',
-    steamImportError:'Import fehlgeschlagen', steamLibraryCount:'{0} Spiele in Bibliothek',
-    inLibrary:'In Bibliothek', backlogShuffle:'Backlog Shuffle',
-    persona:'Dein Geschmack', antiTaste:'Was du hasst', antiTasteSub:'Aus deinem Feed verbannt',
-    weeklyVibe:'Wochen-Vibe', pickForUs:'Ueberrasch mich!', dnaLink:'DNA teilen',
-    playOn:'Jetzt auf {0}', whySeeing:'Warum das?', matchReason:'Passt zu dir',
-    swipeLeft:'Links', swipeRight:'Rechts', bannedContent:'Verbannt',
-    rapidFireTitle:'15 Sekunden, los', rapidFireSub:'Links = Nein. Rechts = Ja. Go.',
-    rapidFireComplete:'Done! Wir kennen dich', letterboxd:'Letterboxd Export',
-    letterboxdSub:'Merkliste als CSV exportieren',
-    couchCoop:'Couch Roulette', couchCoopSub:'Wenn ihr euch nicht einigen koennt',
-    spin:'Los!', result:'Das wird\'s!',
-    games:'Spiele', whatToPlay:'Was wird gespielt?', platforms:'Plattformen',
-    playstyle:'Spielstil', timeAvailable:'Zeit', sessions:'Sitzungen',
-    quickSession:'Kurz (15-30 Min)', moderateSession:'Mittel (1-2 Std)', longSession:'Lang (3+ Std)',
-    playing:'Gerade gespielt', completed:'Geschafft', backlog:'Backlog', wishlist:'Wunschliste', dropped:'Abgebrochen',
-    hoursPlayed:'Std. gespielt', onSale:'Im Angebot', friendsPlaying:'Freunde spielen',
-    errorLoading:'Fehler beim Laden', retry:'Erneut', errorDetails:'Details',
-    cardCount:'{0} Karten', undo:'Rueckgaengig', undoMessage:'{0} entfernt',
-    becauseYouLiked:'Weil dir "{0}" gefaellt', swipeActionLike:'Geswiped', swipeActionNope:'Uebersprungen',
-    swipeActionSkip:'Uebergangen', notForMe:'Nix fuer mich', seenIt:'Bereits gesehen',
-    wrongMood:'Falscher Stimmung', notMyGenre:'Nicht mein Genre', otherReason:'Anderer Grund',
-    feedbackTitle:'Warum nicht?', fromWatchlist:'Aus Merkliste',
-    crossMediaTitle:'Passt auch', noDescription:'Keine Beschreibung',
-    search:'Suchen', searchPlaceholder:'Titel oder Autor...', searchNoResults:'Nichts zu "{0}"',
-    releaseRadar:'Erscheinungsradar', upcoming:'Demnaechst', justReleased:'Erschienen', radarDays:'Zeitraum',
-    portalBooks:'Entdecke Geschichten, die zu dir passen', portalMovies:'Finde dein naechstes Kinoerlebnis',
-    portalTV:'Serien fuer deinen naechsten Binge-Abend', portalGames:'Dein naechstes Spielabenteuer wartet',
-    ctaBooks:'Buch oeffnen', ctaMovies:'Film starten', ctaTV:'Serie starten', ctaGames:'Spiel starten',
-    portalSubtitle:'Waehle dein Universum', vibeTitle:'Was ist dein Vibe?',
-    vibePacingSlow:'Langsam & atmosphaerisch', vibePacingFast:'Rasant & voller Adrenalin',
-    vibeToneDark:'Dunkel & roh', vibeToneLight:'Leicht & wohlfuehlend',
-    vibeComplexPopcorn:'Popcorn-Spass', vibeComplexDeep:'Kopfkino & Tiefgang',
-    tasteProfile:'Geschmacksprofil', tasteDNATitle:'Dein Media-DNA',
-    tasteGenres:'Top Genres', tastePacing:'Tempo', tasteTone:'Ton', tasteComplex:'Tiefe', tasteRadar:'Geschmacksradar',
-    tasteNoData:'Noch nicht genug Daten. Swipe mehr!', tasteVibe:'Dein Vibe'
-  },
-  en: {
-    title:'BookSwipe', subtitle:'Books, movies & games', skip:'Skip', like:'Love it',
-    nope:'Nope', discover:'Discover', onboarding:'Welcome!', quiz:'Quiz', swipe:'Swipe',
-    history:'History', watchlist:'Watchlist', stats:'Stats', empty:'Nothing found', loading:'Loading...',
-    age:'Age', lang:'Language', dark:'Dark', light:'Light', yes:'Yes', no:'No', export:'Export',
-    share:'Share', whoWatching:'Who\'s watching?', solo:'Solo', dateNight:'Date Night', family:'Family',
-    blindDate:'Blind Date', rapidFire:'Rapid Fire', whoWatchingSub:'For better picks',
-    familySub:'Horror and crime filtered out', dateNightSub:'Romance & Thriller up',
-    soloSub:'You\'re in control', moodTime:'Mood + Time', moodTimeTitle:'What do you want to play?',
-    moodTimeSub:'Choose your mood and available time',
-    quickPlay:'Quick (15-30 min)', mediumPlay:'Medium (1-2 hrs)', longPlay:'Long (3+ hrs)', anyPlay:'Any',
-    cozy:'Cozy', intense:'Intense', chill:'Chill', competitive:'Competitive',
-    applyFilter:'Apply', clearFilter:'Clear', filterActive:'Filter active',
-    steamLibrary:'Steam Library', steamImport:'Import', steamId:'Steam ID',
-    steamApiKey:'Steam API Key', steamImporting:'Importing...', steamImported:'Imported',
-    steamImportError:'Import failed', steamLibraryCount:'{0} games in library',
-    inLibrary:'In Library', backlogShuffle:'Backlog Shuffle',
-    persona:'Your Taste', antiTaste:'What you hate', antiTasteSub:'Banned from your feed',
-    weeklyVibe:'Weekly Vibe', pickForUs:'Pick for Us!', dnaLink:'Share DNA',
-    playOn:'▶ {0}', whySeeing:'Why this?', matchReason:'Matches you',
-    swipeLeft:'Left', swipeRight:'Right', bannedContent:'Banished',
-    rapidFireTitle:'15 seconds. Go.', rapidFireSub:'Left = no. Right = yes. Fast.',
-    rapidFireComplete:'Done. We know you.', letterboxd:'Letterboxd Export',
-    letterboxdSub:'Export watchlist as CSV',
-    couchCoop:'Couch Roulette', couchCoopSub:'Can\'t decide? Try this.',
-    spin:'Spin!', result:'This one!',
-    games:'Games', whatToPlay:'What to play?', platforms:'Platforms',
-    playstyle:'Playstyle', timeAvailable:'Time', sessions:'Sessions',
-    quickSession:'Quick (15-30 min)', moderateSession:'Medium (1-2 hrs)', longSession:'Long (3+ hrs)',
-    playing:'Playing', completed:'Done', backlog:'Backlog', wishlist:'Wishlist', dropped:'Dropped',
-    hoursPlayed:'hrs played', onSale:'On Sale', friendsPlaying:'Friends playing',
-    errorLoading:'Load failed', retry:'Retry', errorDetails:'Details',
-    cardCount:'{0} cards', undo:'Undo', undoMessage:'{0} removed',
-    becauseYouLiked:'Because you liked "{0}"', swipeActionLike:'Liked', swipeActionNope:'Passed',
-    swipeActionSkip:'Skipped', notForMe:'Not for me', seenIt:'Already seen',
-    wrongMood:'Wrong mood', notMyGenre:'Not my genre', otherReason:'Other',
-    feedbackTitle:'Why not?', fromWatchlist:'From watchlist',
-    crossMediaTitle:'You\'ll also like', noDescription:'No description',
-    search:'Search', searchPlaceholder:'Title or author...', searchNoResults:'Nothing for "{0}"',
-    releaseRadar:'Release Radar', upcoming:'Upcoming', justReleased:'Just Released', radarDays:'Time Range',
-    portalBooks:'Discover stories that match your vibe', portalMovies:'Find your next cinematic obsession',
-    portalTV:'Binge-worthy shows curated for you', portalGames:'Your next gaming adventure awaits',
-    ctaBooks:'Open Book', ctaMovies:'Start Watching', ctaTV:'Start Binging', ctaGames:'Press Start',
-    portalSubtitle:'Choose your universe', vibeTitle:'What\'s your vibe?',
-    vibePacingSlow:'Slow Burn & Atmospheric', vibePacingFast:'Fast-Paced & Adrenaline',
-    vibeToneDark:'Dark & Gritty', vibeToneLight:'Light & Comforting',
-    vibeComplexPopcorn:'Popcorn Fun', vibeComplexDeep:'Mind-Bending & Deep',
-    tasteProfile:'Taste Profile', tasteDNATitle:'Your Media DNA',
-    tasteGenres:'Top Genres', tastePacing:'Pacing', tasteTone:'Tone', tasteComplex:'Complexity', tasteRadar:'Taste Radar',
-    tasteNoData:'Not enough data yet. Swipe more!', tasteVibe:'Your Vibe'
-  }
-};
 
-const WATCH_MODES = {
-  solo: { hardBlock: [], boost: [], label: 'solo' },
-  dateNight: { hardBlock: [], boost: ['romance','thriller','comedy'], label: 'dateNight' },
-  family: { hardBlock: ['horror','crime','war'], boost: ['animation','family','comedy'], label: 'family' }
-};
-
-const PERSONA_BADGES = {
-  de: {
-    a24Disciple: 'A24 Juenger', horrorSkeptic: 'Horror-Skeptiker', romcomAddict: 'RomCom-Suechtiger',
-    nostalgiaAddict: '90er Nostalgie-Addict', foreignFilmAficionado: 'Foreign Film Kenner',
-    cerebrlElite: 'Cerebrale Elite', cozyQueen: 'Cozy Queen', actionJunkie: 'Action Junkie',
-    mindBender: 'Mind Bender', normie: 'Normie', wildcard: 'Wildcard',
-    darkSoul: 'Dunkle Seele', comfortSeeker: 'Comfort Seeker'
-  },
-  en: {
-    a24Disciple: 'A24 Disciple', horrorSkeptic: 'Horror Skeptic', romcomAddict: 'RomCom Addict',
-    nostalgiaAddict: '90s Nostalgia Addict', foreignFilmAficionado: 'Foreign Film Aficionado',
-    cerebrlElite: 'Cerebral Elite', cozyQueen: 'Cozy Queen', actionJunkie: 'Action Junkie',
-    mindBender: 'Mind Bender', normie: 'Normie', wildcard: 'Wildcard',
-    darkSoul: 'Dark Soul', comfortSeeker: 'Comfort Seeker'
-  }
-};
-
-const STREAMING_PROVIDERS = {
-  8: { name:'Netflix', color:'#E50914', icon:'N', deepLink:'nflix://' },
-  15: { name:'Hulu', color:'#1CE783', icon:'H', deepLink:'hulu://' },
-  350: { name:'Apple TV', color:'#555', icon:'', deepLink:'tvapp://' },
-  119: { name:'Prime Video', color:'#00A8E1', icon:'P', deepLink:'aiv://' },
-  387: { name:'HBO Max', color:'#B535F6', icon:'H', deepLink:'hbomax://' },
-  531: { name:'Paramount', color:'#0064FF', icon:'P', deepLink:'paramount://' },
-  337: { name:'Disney', color:'#113CCF', icon:'D', deepLink:'disneyplus://' }
-};
-
-// Cross-media genre mapping: if you like X in movies, try Y in games
-const CROSS_MEDIA_GENRES = {
-  movies: {
-    games: { 28: [2,24], 878: [12,31], 27: [], 10749: [], 14: [12], 35: [], 16: [], 18: [12,31] },
-    books: { 28: [], 878: [], 27: [], 10749: [], 14: [], 35: [], 16: [], 18: [] }
-  },
-  tv: {
-    games: { 10765: [12,31], 18: [12,31], 35: [], 16: [], 9648: [] },
-    books: { 10765: [], 18: [], 35: [], 16: [], 9648: [] }
-  },
-  games: {
-    movies: { 'Action': [28], 'RPG': [14,878], 'Adventure': [12,28], 'Puzzle': [], 'Strategy': [], 'Horror': [27] },
-    books: { 'RPG': ['fantasy'], 'Adventure': ['adventure'], 'Puzzle': ['mystery'], 'Strategy': ['historical'] }
-  },
-  books: {
-    movies: { 'fantasy': [14], 'scifi': [878], 'thriller': [53], 'romance': [10749], 'horror': [27] },
-    games: { 'fantasy': [12], 'scifi': [12,31], 'thriller': [], 'romance': [], 'horror': [] }
-  }
-};
 
 // ===== MAIN APP CLASS =====
 class App {
@@ -203,12 +53,20 @@ class App {
     this.watchlist = [];
     this.disliked = [];
     this.history = [];
+    this.consumed = []; // LIB-002: Library page — items the user has already read/watched/played
     this.currentCards = [];
     this.currentCardIndex = 0;
     this.swipeEngine = null;
     this.enrichment = new EnrichmentWorker(this);
     this.recommender = new Recommender(this);
     this.experiment = new ABTest({ app: this });
+    // Retention loops: Daily Top 5 + Streak tracker
+    this.dailyTop5 = new DailyTop5(this);
+    this.streak = new StreakTracker(this, { dailyGoal: this.state.dailyGoal || 5 });
+    this.streak.onMilestone = (milestone, payload) => this._fireStreakMilestone(milestone, payload);
+    this.streak.onGoalReached = (payload) => this._onDailyGoalReached(payload);
+    this.streak.onStreakUpdated = () => this._updateStreakPill();
+    this.dailyTop5.onRefresh = (payload) => this._onDailyTop5Refreshed(payload);
     // End experiment session on page unload, start new one on visibility change
     window.addEventListener('beforeunload', () => this.experiment.endSession());
     document.addEventListener('visibilitychange', () => {
@@ -284,6 +142,7 @@ class App {
     this.watchlist = await getWatchlist();
     this.disliked = await getDisliked();
     this.history = await getHistory();
+    this.consumed = await getConsumed(); // LIB-002: load Library consumed items alongside watchlist
     const profile = await getRecProfile();
     if (profile) this.recommender.profile = profile;
     
@@ -302,6 +161,566 @@ class App {
     setUIState(this.lang, this.state);
     await saveRecProfile(this.recommender.profile);
   }
+
+  // ===== LIBRARY: consumed items (LIB-002) =====
+  // Single canonical path for ALL add-consumed flows (modal, kebab promote,
+  // quick-promote from want-to). Detects conflicts and prompts the user.
+  // Returns one of:
+  //   { status: 'added',     record }  — stored in `consumed` (and removed from watchlist if it was there)
+  //   { status: 'moved',     record }  — was in watchlist, now moved to consumed
+  //   { status: 'separate',  record }  — was in watchlist, added without moving
+  //   { status: 'updated',   record }  — already-consumed item, rating was updated
+  //   { status: 'already-exists' }      — already-consumed item, no update requested
+  //   { status: 'invalid-rating' }      — rating was not an integer 1-5
+  //   { status: 'invalid-args' }        — missing item or item.id
+  //   { status: 'race-conflict' }       — promote failed and item is still in watchlist (caller should retry)
+  async _addConsumedAtomic(item, rating, opts = {}) {
+    if (!item || !item.id) {
+      console.warn('[App] _addConsumedAtomic: missing item or id');
+      return { status: 'invalid-args' };
+    }
+    if (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+      console.warn('[App] _addConsumedAtomic: rating must be integer 1-5, got', rating);
+      showToast(this.lang === 'de' ? 'Bitte bewerte (1–5 Sterne)' : 'Please rate (1–5 stars)', { type: 'warning', duration: 2000 });
+      return { status: 'invalid-rating' };
+    }
+
+    // 1. Already in consumed? — prompt to update rating (default on, opt-out via opts.skipDuplicatePrompt)
+    const existingRecord = this.consumed.find(c => c.id === item.id);
+    if (existingRecord) {
+      const msg = this.lang === 'de' ? 'Bereits in deiner Bibliothek' : 'Already in your library';
+      let wantUpdate = true;
+      if (!opts.skipDuplicatePrompt) {
+        const promptResult = await this._showConsumedConflictPrompt(item, { mode: 'duplicate' });
+        wantUpdate = !!(promptResult && promptResult.choice === 'update');
+      }
+      if (wantUpdate) {
+        // Capture the OLD rating BEFORE mutating this.consumed, so the recommender
+        // can subtract the old contribution and add the new one.
+        const oldRating = existingRecord.consumedRating;
+        const updated = await updateConsumedRating(item.id, rating);
+        if (updated) {
+          this.consumed = this.consumed.map(c => c.id === item.id ? updated : c);
+          if (oldRating !== rating) {
+            // Two-step recommender update: subtract old signal, add new.
+            // Pass a PRE-MUTATION snapshot (with the OLD consumedRating) so any
+            // removeFromConsumed impl that reads item.consumedRating sees the right value.
+            const oldSnapshot = { ...updated, consumedRating: oldRating };
+            if (typeof this.recommender.removeFromConsumed === 'function') {
+              this.recommender.removeFromConsumed(oldSnapshot, oldRating);
+              this.recommender.updateFromConsumed(updated, rating);
+            } else {
+              // No subtract primitive — DO NOT call updateFromConsumed unconditionally
+              // (it would double-count the item's contribution). Log and skip.
+              console.warn('[App] Recommender has no removeFromConsumed; skipping taste-vector update for rating change', { id: item.id, oldRating, rating });
+            }
+          }
+          showToast(`${msg} — ${this.lang === 'de' ? 'Bewertung aktualisiert' : 'rating updated'}`, { type: 'info', duration: 1800 });
+          return { status: 'updated', record: updated };
+        }
+      }
+      showToast(msg, { type: 'info', duration: 1800 });
+      return { status: 'already-exists' };
+    }
+
+    // 2. In watchlist? — prompt user: move it (default) or add separately
+    const inWatchlist = this.watchlist.some(w => w.id === item.id);
+    if (inWatchlist) {
+      const choice = await this._showConsumedConflictPrompt(item, { mode: 'conflict' });
+      // Dismissed (Escape / click-outside / X) — user backed out, do NOT write anything.
+      if (!choice) {
+        return { status: 'dismissed' };
+      }
+      if (choice.choice === 'move') {
+        const result = await promoteToConsumed(item.id, rating);
+        if (result && result.moved && result.record) {
+          this.consumed = [...this.consumed, result.record];
+          this.watchlist = this.watchlist.filter(w => w.id !== item.id);
+          this.recommender.updateFromConsumed(result.record, rating);
+          const ok = this.lang === 'de' ? 'Beendet →' : 'Marked as consumed';
+          showToast(`${ok}: ${item.title}`, { type: 'success', duration: 1800 });
+          return { status: 'moved', record: result.record };
+        }
+        // promoteToConsumed returned moved:false. Do NOT fall back to addToConsumed
+        // (that would put the item in BOTH stores, violating the single-bucket invariant).
+        // Re-read stores to detect if a concurrent tab already completed the move.
+        const refreshed = await getConsumed();
+        const raced = refreshed.find(c => c.id === item.id);
+        if (raced) {
+          this.consumed = refreshed;
+          this.watchlist = this.watchlist.filter(w => w.id !== item.id);
+          showToast(`${this.lang === 'de' ? 'Bereits erledigt' : 'Already done'}: ${item.title}`, { type: 'info', duration: 1800 });
+          return { status: 'moved', record: raced };
+        }
+        console.warn('[App] promoteToConsumed failed and item not in consumed; refusing to dual-write');
+        showToast(this.lang === 'de' ? 'Konflikt — bitte erneut versuchen' : 'Conflict — please retry', { type: 'warning', duration: 2000 });
+        return { status: 'race-conflict' };
+      }
+      // 'separate' — user explicitly chose to keep the watchlist entry too
+      if (choice.choice === 'separate') {
+        await addToConsumed(item, rating, { promotedFromWatchlist: false });
+        const record = { ...item, consumedRating: rating, consumedAt: Date.now(), promotedFromWatchlist: false };
+        this.consumed = [...this.consumed, record];
+        this.recommender.updateFromConsumed(record, rating);
+        showToast(`${this.lang === 'de' ? 'Hinzugefügt' : 'Added'}: ${item.title}`, { type: 'success', duration: 1800 });
+        return { status: 'separate', record };
+      }
+      // Unknown choice — treat as dismissed (defensive)
+      return { status: 'dismissed' };
+    }
+
+    // 3. Not in either store — plain add
+    await addToConsumed(item, rating, { promotedFromWatchlist: false });
+    const record = { ...item, consumedRating: rating, consumedAt: Date.now(), promotedFromWatchlist: false };
+    this.consumed = [...this.consumed, record];
+    this.recommender.updateFromConsumed(record, rating);
+    showToast(`${this.lang === 'de' ? 'Hinzugefügt' : 'Added'}: ${item.title}`, { type: 'success', duration: 1800 });
+    return { status: 'added', record };
+  }
+
+  /**
+   * Show a small inline modal for the "item in both watchlist and consumed" conflict.
+   * Resolves to { choice: 'move' | 'separate' | 'update' | null }.
+   * - null is returned if the user dismisses (Escape, click-outside, X).
+   * - 'move' is the default — focused first and on Enter.
+   *
+   * Modes:
+   *   mode: 'conflict'  — item is in watchlist but not consumed → "Move it" / "Add separately"
+   *   mode: 'duplicate' — item is already in consumed → "Update rating" / "Cancel"
+   */
+  _showConsumedConflictPrompt(item, opts = {}) {
+    return new Promise((resolve) => {
+      const mode = opts.mode || 'conflict';
+      const existing = document.querySelector('.consumed-conflict-overlay');
+      if (existing) existing.remove();
+
+      const de = this.lang === 'de';
+      let title, body, primaryLabel, secondaryLabel, primaryChoice, secondaryChoice;
+      if (mode === 'duplicate') {
+        title = de ? 'Bereits in deiner Bibliothek' : 'Already in your library';
+        body = de
+          ? `„${item.title}“ ist bereits als gesehen markiert. Bewertung aktualisieren?`
+          : `"${item.title}" is already in your library. Update its rating?`;
+        primaryLabel = de ? '✓ Bewertung aktualisieren' : '✓ Update rating';
+        secondaryLabel = de ? 'Abbrechen' : 'Cancel';
+        primaryChoice = 'update';
+        secondaryChoice = null;
+      } else {
+        title = de ? 'Bereits auf deiner Merkliste' : 'Already on your Want to list';
+        body = de
+          ? `„${item.title}“ ist in deiner Merkliste. Als gesehen markieren (verschiebt es) oder separat hinzufügen?`
+          : `"${item.title}" is on your Want to list. Mark as consumed (moves it) or add separately?`;
+        primaryLabel = de ? '→ Verschieben' : '→ Move it';
+        secondaryLabel = de ? 'Separat hinzufügen' : 'Add separately';
+        primaryChoice = 'move';
+        secondaryChoice = 'separate';
+      }
+
+      const overlay = document.createElement('div');
+      overlay.className = 'consumed-conflict-overlay';
+      overlay._resolved = false; // double-click guard (review #4)
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', title);
+      overlay.innerHTML = `
+        <div class="consumed-conflict-modal">
+          <h3 class="consumed-conflict-title">${escapeHTML(title)}</h3>
+          <p class="consumed-conflict-body">${escapeHTML(body)}</p>
+          <div class="consumed-conflict-actions">
+            <button class="btn btn-secondary consumed-conflict-secondary" type="button">${escapeHTML(secondaryLabel)}</button>
+            <button class="btn btn-primary consumed-conflict-primary" type="button" autofocus>${escapeHTML(primaryLabel)}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('open'));
+
+      const cleanup = (result) => {
+        if (overlay._resolved) return; // idempotent
+        overlay._resolved = true;
+        overlay.classList.remove('open');
+        setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 200);
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+        else if (e.key === 'Enter') cleanup({ choice: primaryChoice });
+      };
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+      overlay.querySelector('.consumed-conflict-primary')?.addEventListener('click', () => cleanup({ choice: primaryChoice }));
+      overlay.querySelector('.consumed-conflict-secondary')?.addEventListener('click', () => cleanup({ choice: secondaryChoice }));
+    });
+  }
+
+  // ===== LIBRARY PAGE (LIB-003) =====
+  // Combined "Want to" + "Consumed" view. Purely view-local state
+  // (active tab + active media-type filter) lives on the instance so it
+  // survives re-renders within the same session but never persists to
+  // the user-profile state. Data always comes from this.watchlist and
+  // this.consumed, which are populated in _loadState() (LIB-002).
+  renderLibrary(app) {
+    const de = this.lang === 'de';
+    const activeTab = this._libraryActiveTab || 'want';
+    const activeMediaType = this._libraryActiveMediaType || 'all';
+
+    // Source items = active tab's full set. Filter applied below for the grid.
+    const sourceItems = activeTab === 'consumed' ? this.consumed : this.watchlist;
+
+    // Per-chip counts reflect the ACTIVE TAB's set, so the numbers on the
+    // chips always match what the user will see when they click that chip
+    // (e.g. switching Want->Consumed recomputes the chip counts).
+    const mtCounts = { all: 0, movies: 0, tv: 0, books: 0, games: 0 };
+    sourceItems.forEach(it => { mtCounts.all++; const m = this._mediaTypeOf(it); mtCounts[m] = (mtCounts[m] || 0) + 1; });
+    const wantCount = this.watchlist.length;
+    const consumedCount = this.consumed.length;
+
+    // Apply the active media-type filter for the grid render
+    const items = activeMediaType === 'all'
+      ? sourceItems
+      : sourceItems.filter(it => this._mediaTypeOf(it) === activeMediaType);
+
+    const statusTabs = `
+      <div class="status-tabs" role="tablist">
+        <button class="status-tab ${activeTab === 'want' ? 'active' : ''}" data-tab="want" role="tab" aria-selected="${activeTab === 'want'}">
+          ${this.tr.wantTo} <span class="status-tab-count">${wantCount}</span>
+        </button>
+        <button class="status-tab ${activeTab === 'consumed' ? 'active' : ''}" data-tab="consumed" role="tab" aria-selected="${activeTab === 'consumed'}">
+          ${this.tr.consumed} <span class="status-tab-count">${consumedCount}</span>
+        </button>
+      </div>`;
+
+    const mediaTypeChips = `
+      <div class="media-type-chips" role="tablist" aria-label="${de ? 'Medientyp' : 'Media type'}"  // no i18n key needed>
+        ${[
+          { id: 'all',    label: de ? 'Alle'    : 'All',    icon: '✨' },  // no i18n key needed
+          { id: 'movies', label: de ? 'Filme'   : 'Movies', icon: '🎬' },  // no i18n key needed
+          { id: 'tv',     label: de ? 'Serien'  : 'TV',     icon: '📺' },  // no i18n key needed
+          { id: 'books',  label: de ? 'Bücher'  : 'Books',  icon: '📚' },  // no i18n key needed
+          { id: 'games',  label: de ? 'Spiele'  : 'Games',  icon: '🎮' },  // no i18n key needed
+        ].map(m => `<button class="mt-chip ${activeMediaType === m.id ? 'active' : ''}" data-mt="${m.id}" role="tab" aria-selected="${activeMediaType === m.id}">${m.icon} ${m.label} <span class="mt-chip-count">${mtCounts[m.id] || 0}</span></button>`).join('')}
+      </div>`;
+
+    const cardGrid = items.length === 0
+      ? this._libraryEmptyState(activeTab)
+      : `<div class="library-card-grid">${items.map(it => this._renderLibraryCard(it, activeTab)).join('')}</div>`;
+
+    // Bottom CTA is tab-aware: 'add to library' only makes sense on the Want tab.
+    // On the Consumed tab, the first button is a placeholder for the future
+    // 'find similar' / 're-rate' action wired by LIB-005/006.
+    const primaryCta = activeTab === 'want'
+      ? `<button class="btn btn-primary library-add-btn" data-action="library-add">+ ${this.tr.addConsumed}</button>`
+      : `<button class="btn btn-primary library-rate-btn" data-action="library-rate" title="${de ? 'Bald verfügbar' : 'Coming soon'}">${de ? 'Bewertung anpassen' : 'Adjust rating'}  // no i18n key (LIB-006)</button>`;
+    const bottomCTA = `
+      <div class="library-bottom-cta">
+        ${primaryCta}
+        <button class="btn btn-secondary library-export-btn" data-action="library-export">${de ? 'Exportieren' : 'Export'}  // no i18n key (LIB-008)</button>
+      </div>`;
+
+    app.innerHTML = `
+      <div class="library-page">
+        <header class="library-header">
+          <h1 class="library-title">📚 ${this.tr.library}</h1>
+          <div class="library-stats">
+            <span class="library-stat">${this.tr.wantTo}: <strong>${wantCount}</strong></span>
+            <span class="library-stat-sep">·</span>
+            <span class="library-stat">${this.tr.consumed}: <strong>${consumedCount}</strong></span>
+          </div>
+        </header>
+        ${statusTabs}
+        ${mediaTypeChips}
+        ${cardGrid}
+        ${bottomCTA}
+        ${this._navHTML('library')}
+      </div>`;
+
+    this._bindLibraryEvents(app);
+    this._bindNav(app);
+  }
+
+  _libraryEmptyState(activeTab) {
+    const de = this.lang === 'de';
+    if (activeTab === 'consumed') {
+      return `<div class="empty-state library-empty">
+        <span class="empty-state-icon">✅</span>
+        <h2>${de ? 'Noch nichts als gesehen markiert' : 'Nothing marked as consumed yet'}</h2>  // no i18n key (descriptive)
+        <p>${de ? 'Markiere Filme, Serien, Bücher oder Spiele, die du bereits beendet hast — so bekommen wir bessere Empfehlungen.' : 'Mark movies, shows, books, or games you have finished — we use this to improve recommendations.'}  // no i18n key (descriptive)</p>
+      </div>`;
+    }
+    return `<div class="empty-state library-empty">
+      <span class="empty-state-icon">📚</span>
+      <h2>${de ? 'Deine Merkliste ist leer' : 'Your Want-to list is empty'}</h2>  // no i18n key (descriptive)
+      <p>${de ? 'Wische rechts, um Dinge zu speichern, die dich interessieren.' : 'Swipe right to save things that catch your eye.'}  // no i18n key (descriptive)</p>
+      <button class="btn btn-primary" data-nav="discover">${this.tr.discover}</button>
+    </div>`;
+  }
+
+  _renderLibraryCard(item, activeTab) {
+    const de = this.lang === 'de';
+    const isConsumed = activeTab === 'consumed';
+    const rating = isConsumed && item.consumedRating
+      ? `<span class="library-card-rating library-card-rating--readonly" role="img" aria-label="${de ? 'Deine Bewertung' : 'Your rating'}: ${item.consumedRating} ${de ? 'von 5 Sternen' : 'of 5 stars'}  // no i18n key (template literal)>${'★'.repeat(item.consumedRating)}${'☆'.repeat(5 - item.consumedRating)}</span>`
+      : '';
+    const mt = this._mediaTypeOf(item);
+    const mtIcon = { movies: '🎬', tv: '📺', books: '📚', games: '🎮' }[mt] || '✨';
+    return `
+      <div class="library-card" data-id="${escapeHTML(item.id)}">
+        ${createImageWithFallback(item.cover || item.backdrop, item.title, 'library-card-cover', mtIcon)}
+        <div class="library-card-info">
+          <h3 class="library-card-title">${escapeHTML(item.title)}</h3>
+          <div class="library-card-meta">
+            ${item.year ? `<span class="library-card-year">${item.year}</span>` : ''}
+            <span class="library-card-mt" title="${mt}">${mtIcon}</span>
+            ${rating}
+          </div>
+        </div>
+        <button class="library-card-kebab" data-action="library-kebab" data-id="${escapeHTML(item.id)}" aria-label="${de ? 'Aktionen' : 'Actions'}">⋮</button>  // no i18n key (LIB-005)
+      </div>`;
+  }
+
+  _mediaTypeOf(item) {
+    if (!item) return 'movies';
+    // Accept both 'type' and 'media_type' fields; map to plural form to match chip IDs.
+    const t = (item.type || item.media_type || '').toLowerCase();
+    if (t === 'movie' || t === 'movies') return 'movies';
+    if (t === 'tv') return 'tv';
+    if (t === 'book' || t === 'books') return 'books';
+    if (t === 'game' || t === 'games') return 'games';
+    if (item.source === 'openlibrary' || item.source === 'gbooks') return 'books';
+    if (item.source === 'igdb' || item.source === 'steam') return 'games';
+    return this.state?.mediaType || 'movies';
+  }
+
+  _bindLibraryEvents(app) {
+    const de = this.lang === 'de';
+    app.querySelectorAll('.status-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        this._libraryActiveTab = tab.dataset.tab;
+        this.renderLibrary(app);
+      });
+    });
+    app.querySelectorAll('.mt-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        this._libraryActiveMediaType = chip.dataset.mt;
+        this.renderLibrary(app);
+      });
+    });
+    app.querySelector('[data-nav="discover"]')?.addEventListener('click', () => {
+      this.renderView('discover', app);
+    });
+    // Add-consumed modal (LIB-006) + Kebab menu (LIB-005) are separate tickets.
+    // Stub them with an info toast so the buttons are visibly wired but the
+    // implementation lives in the appropriate follow-up.
+    app.querySelector('[data-action="library-add"]')?.addEventListener('click', () => {
+      showToast(de ? '🔍 Suche folgt in LIB-006' : '🔍 Search arrives in LIB-006', { type: 'info', duration: 1800 });  // no i18n key (placeholder)
+    });
+    app.querySelector('[data-action="library-rate"]')?.addEventListener('click', () => {
+      showToast(de ? 'Bewertung anpassen folgt in LIB-006' : 'Adjust rating arrives in LIB-006', { type: 'info', duration: 1800 });  // no i18n key (placeholder)
+    });
+    app.querySelector('[data-action="library-export"]')?.addEventListener('click', () => {
+      showToast(de ? '📤 Export folgt in LIB-008' : '📤 Export arrives in LIB-008', { type: 'info', duration: 1800 });  // no i18n key (placeholder)
+    });
+    // LIB-005: Kebab menu opens a dropdown with tab-aware actions.
+    // The active tab is read from this._libraryActiveTab at click time
+    // (NOT at bind time, so tab switches re-use the same listeners).
+    app.querySelectorAll('[data-action="library-kebab"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const itemId = btn.dataset.id;
+        const item = (this._libraryActiveTab === 'consumed' ? this.consumed : this.watchlist).find(i => i.id === itemId);
+        if (!item) return;
+        this._openLibraryKebabMenu(btn, item, this._libraryActiveTab || 'want');
+      });
+    });
+  }
+  // ===== LIBRARY KEBAB MENU (LIB-005) =====
+  // Opens a dropdown menu next to the kebab button with tab-aware actions.
+  // On the Want tab: [Remove from library, Move to consumed]
+  // On the Consumed tab: [Remove from library, Move to want]
+  // The menu closes on outside click, Escape, or after an action.
+  _openLibraryKebabMenu(btn, item, activeTab) {
+    this._closeLibraryKebabMenu(); // close any existing menu first
+    const de = this.lang === 'de';
+    const isConsumed = activeTab === 'consumed';
+    // Build the dropdown menu
+    const menu = document.createElement('div');
+    menu.className = 'library-kebab-menu';
+    menu.setAttribute('role', 'menu');
+    menu.dataset.itemId = item.id;
+    const moveAction = isConsumed
+      ? { action: 'move-to-want',     label: de ? 'Auf Merkliste setzen' : 'Move to Want',     icon: '←' }  // no i18n key
+      : { action: 'move-to-consumed', label: de ? 'Als gesehen markieren' : 'Mark as consumed', icon: '→' };  // no i18n key
+    menu.innerHTML = `
+      <button class="library-kebab-item" role="menuitem" data-kebab-action="remove">
+        <span class="library-kebab-icon">🗑</span>
+        <span>${de ? 'Aus Bibliothek entfernen' : 'Remove from library'}</span>
+      </button>
+      <button class="library-kebab-item" role="menuitem" data-kebab-action="${moveAction.action}">
+        <span class="library-kebab-icon">${moveAction.icon}</span>
+        <span>${moveAction.label}</span>
+      </button>
+    `;
+    // Position the menu next to the kebab button
+    document.body.appendChild(menu);
+    const rect = btn.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const top = rect.bottom + window.scrollY + 4;
+    // Prefer right-aligned to the kebab; fall back to left-aligned if it would overflow
+    let left = rect.right + window.scrollX - menuRect.width;
+    if (left < 8) left = rect.left + window.scrollX;
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+    menu.classList.add('open');
+    // Wire up menu item clicks
+    menu.querySelectorAll('[data-kebab-action]').forEach(itemBtn => {
+      itemBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = itemBtn.dataset.kebabAction;
+        this._closeLibraryKebabMenu();
+        this._handleLibraryKebabAction(action, item, activeTab);
+      });
+    });
+    // Close on outside click (capture phase so it fires before the kebab reopens)
+    setTimeout(() => {
+      document.addEventListener('click', this._onKebabOutsideClick = () => this._closeLibraryKebabMenu(), { capture: true, once: true });
+      document.addEventListener('keydown', this._onKebabEscape = (e) => {
+        if (e.key === 'Escape') {
+          this._closeLibraryKebabMenu();
+          document.removeEventListener('keydown', this._onKebabEscape);
+        }
+      });
+    }, 0);
+  }
+
+  _closeLibraryKebabMenu() {
+    document.querySelectorAll('.library-kebab-menu.open').forEach(m => m.remove());
+    if (this._onKebabOutsideClick) {
+      document.removeEventListener('click', this._onKebabOutsideClick, { capture: true });
+      this._onKebabOutsideClick = null;
+    }
+    if (this._onKebabEscape) {
+      document.removeEventListener('keydown', this._onKebabEscape);
+      this._onKebabEscape = null;
+    }
+  }
+
+  // Dispatcher for the 3 kebab actions. Each one updates the in-memory
+  // store, persists to IndexedDB, and re-renders the library view.
+  async _handleLibraryKebabAction(action, item, activeTab) {
+    const de = this.lang === 'de';
+    try {
+      if (action === 'remove') {
+        if (activeTab === 'consumed') {
+          await removeFromConsumed(item.id);
+          this.consumed = this.consumed.filter(i => i.id !== item.id);
+        } else {
+          await removeFromWatchlist(item.id);
+          this.watchlist = this.watchlist.filter(i => i.id !== item.id);
+        }
+        // Invalidate the taste vector cache: the history changed, so previously
+        // scored cards (and the current deck) need to be re-scored next render.
+        // When removing from CONSUMED, do a targeted subtraction using the
+        // original rating (this is the inverse of updateFromConsumed — much
+        // cheaper than a full clear() because it only touches this item's
+        // entity weights, not the entire score cache or taste vector).
+        // For watchlist removals (undo-like flow), clear() is the only option
+        // since the item was never registered via updateFromConsumed.
+        if (activeTab === 'consumed') {
+          this.recommender.removeFromConsumed(item, item.consumedRating);
+        } else {
+          this.recommender.clear();
+        }
+        showToast(de ? '✓ Entfernt' : '✓ Removed', { type: 'success', duration: 1500 });
+      } else if (action === 'move-to-consumed') {
+        // Show a rating prompt, then call _addConsumedAtomic (which handles
+        // the duplicate/conflict case via _showConsumedConflictPrompt).
+        const rating = await this._showRatingPrompt(item);
+        if (rating == null) return; // user cancelled
+        const result = await this._addConsumedAtomic(item, rating, { skipDuplicatePrompt: false });
+        if (result && result.status === 'moved') {
+          // Item was in watchlist, now in consumed — refresh both stores
+          this.watchlist = this.watchlist.filter(i => i.id !== item.id);
+          this.consumed = await getConsumed();
+          showToast(de ? '✓ Als gesehen markiert' : '✓ Marked as consumed', { type: 'success', duration: 1500 });
+        } else if (result && result.status === 'updated') {
+          this.consumed = await getConsumed();
+          showToast(de ? '✓ Bewertung aktualisiert' : '✓ Rating updated', { type: 'success', duration: 1500 });
+        } else if (result && result.status === 'dismissed') {
+          // user dismissed the conflict prompt; do nothing
+        } else {
+          showToast(de ? '⚠ Aktion fehlgeschlagen' : '⚠ Action failed', { type: 'warning', duration: 1800 });
+        }
+      } else if (action === 'move-to-want') {
+        // Move from consumed to watchlist: delete from consumed, add to watchlist,
+        // and re-feed the recommender's like signal so the next scoring reflects
+        // the move (the recommender tracks watchlist items via updateFromSwipe).
+        await removeFromConsumed(item.id);
+        await addToWatchlist({ ...item, consumedRating: undefined, consumedAt: undefined, promotedFromWatchlist: undefined });
+        this.consumed = this.consumed.filter(i => i.id !== item.id);
+        this.watchlist = await getWatchlist();
+        this.recommender.updateFromSwipe(item, 'like');
+        showToast(de ? '✓ Auf Merkliste gesetzt' : '✓ Moved to Want', { type: 'success', duration: 1500 });
+      }
+      // Re-render the library view (this is safe even if we switched tabs)
+      const app = document.getElementById('app');
+      if (app) this.renderLibrary(app);
+    } catch (e) {
+      console.warn('[App] _handleLibraryKebabAction failed:', e);
+      showToast(de ? '⚠ Fehler' : '⚠ Error', { type: 'error', duration: 1800 });
+    }
+  }
+
+  // Simple 1–5 star rating prompt. Returns the chosen rating (1-5) or null if cancelled.
+  // Rendered as a small modal overlay; closes on backdrop click, Escape, or Cancel.
+  _showRatingPrompt(item) {
+    const de = this.lang === 'de';
+    return new Promise((resolve) => {
+      // Close any existing rating prompt
+      document.querySelectorAll('.library-rating-prompt').forEach(el => el.remove());
+      const overlay = document.createElement('div');
+      overlay.className = 'library-rating-prompt';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-label', de ? 'Bewertung abgeben' : 'Rate this');
+      overlay.innerHTML = `
+        <div class="library-rating-prompt-card">
+          <h3>${de ? 'Wie fandest du es?' : 'How did you like it?'}</h3>
+          <p class="library-rating-prompt-title">${escapeHTML(item.title || '')}</p>
+          <div class="library-rating-stars" role="radiogroup" aria-label="${de ? 'Sterne' : 'Stars'}">
+            ${[1, 2, 3, 4, 5].map(n => `<button class="library-rating-star" data-rating="${n}" role="radio" aria-label="${n} ${de ? 'Sterne' : 'stars'}">☆</button>`).join('')}
+          </div>
+          <div class="library-rating-actions">
+            <button class="btn btn-secondary library-rating-cancel">${de ? 'Abbrechen' : 'Cancel'}</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      const close = (val) => {
+        overlay.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(null); };
+      document.addEventListener('keydown', onKey);
+      // Backdrop click closes with null
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      // Cancel button
+      overlay.querySelector('.library-rating-cancel').addEventListener('click', () => close(null));
+      // Star buttons
+      overlay.querySelectorAll('.library-rating-star').forEach((star, idx) => {
+        star.addEventListener('mouseenter', () => {
+          // preview fill
+          overlay.querySelectorAll('.library-rating-star').forEach((s, i) => {
+            s.textContent = i <= idx ? '★' : '☆';
+          });
+        });
+        star.addEventListener('mouseleave', () => {
+          overlay.querySelectorAll('.library-rating-star').forEach(s => { s.textContent = '☆'; });
+        });
+        star.addEventListener('click', () => close(Number(star.dataset.rating)));
+      });
+    });
+  }
+
 
   t(k, ...args) {
     let v = this.tr[k] || k;
@@ -453,822 +872,7 @@ class App {
     ).join(' ');
   }
 
-  // ===== ONBOARDING =====
-  renderOnboarding(app) {
-    const step = this.state.onboardingStep || 0;
-    if (step === 0) return this._renderWelcomeScreen(app);
-    if (step === 1) return this._renderVibeMatrixScreen(app);
-    if (step === 2) return this._renderWhoWatchingScreen(app);
-    if (step === 3 && this.state.mediaType === 'games') return this._renderPlatformScreen(app);
-    if (step === 3 && this.state.mediaType !== 'games') return this._renderRapidFireScreen(app);
-    if (step === 4 && this.state.mediaType === 'games') return this._renderRapidFireScreen(app);
-    this.state.hasCompletedOnboarding = true;
-    this.save();
-    this.render();
-  }
-
-  _renderWelcomeScreen(app) {
-    // Clean up window listeners from previous render
-    if (this._portalCleanup) { this._portalCleanup(); this._portalCleanup = null; }
-    const de = this.lang === 'de';
-    const types = [
-      { key: 'books', emoji: '📚', title: de ? 'Buecher' : 'Books', sub: this.tr.portalBooks, cta: this.tr.ctaBooks },
-      { key: 'movies', emoji: '🎬', title: de ? 'Filme' : 'Movies', sub: this.tr.portalMovies, cta: this.tr.ctaMovies },
-      { key: 'tv', emoji: '📺', title: 'TV', sub: this.tr.portalTV, cta: this.tr.ctaTV },
-      { key: 'games', emoji: '🎮', title: de ? 'Spiele' : 'Games', sub: this.tr.portalGames, cta: this.tr.ctaGames },
-    ];
-    const activeIdx = types.findIndex(t => t.key === this.state.mediaType);
-    const current = types[activeIdx >= 0 ? activeIdx : 1];
-
-    app.innerHTML = `
-      <div class="portal">
-        <div class="portal-bg" data-aesthetic="${current.key}"></div>
-        <div class="portal-particles" id="portal-particles"></div>
-        <div class="portal-progress"><div class="portal-progress-fill" style="width:25%"></div></div>
-        <div class="portal-lang">
-          <button class="btn ${de ? 'active' : ''}" data-lang="de">DE</button>
-          <button class="btn ${!de ? 'active' : ''}" data-lang="en">EN</button>
-        </div>
-        <div class="portal-content">
-          <div class="portal-header">
-            <h1>${this.tr.title}</h1>
-            <p>${this.tr.portalSubtitle}</p>
-          </div>
-          <div class="portal-carousel">
-            <div class="portal-cards">
-              ${types.map((t, i) => `
-                <div class="portal-card${t.key === current.key ? ' active' : ''}" data-type="${t.key}" role="button" aria-label="${t.title}" tabindex="0" style="transform:translateX(${(i - activeIdx) * 90}px) translateZ(${t.key === current.key ? 60 : -40}px) rotateY(${(i - activeIdx) * -8}deg) scale(${t.key === current.key ? 1 : .85});opacity:${t.key === current.key ? 1 : .5};z-index:${t.key === current.key ? 5 : 2 - Math.abs(i - activeIdx)}">
-                  <div class="portal-card-glow"></div>
-                  <div class="portal-card-cover" style="background-image:url(${t.key === 'books' ? 'https://image.tmdb.org/t/p/w500/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg' : t.key === 'movies' ? 'https://image.tmdb.org/t/p/w500/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg' : t.key === 'tv' ? 'https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg' : 'https://cdn.akamai.steamstatic.com/steam/apps/292030/header.jpg'}),linear-gradient(135deg,${t.key === 'books' ? '#2d1f0e,#1a120b' : t.key === 'movies' ? '#1a0a0a,#0d0d1a' : t.key === 'tv' ? '#150a20,#0a0d1a' : '#0a1515,#0a0a15'})"></div>
-                  <div class="portal-card-overlay"></div>
-                  <div class="portal-card-content">
-                    <span class="portal-card-emoji">${t.emoji}</span>
-                    <div class="portal-card-title">${t.title}</div>
-                    <div class="portal-card-sub">${t.sub}</div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-          <div class="portal-dots">
-            ${types.map((t) => `<div class="portal-dot${t.key === current.key ? ' active' : ''}" data-type="${t.key}"></div>`).join('')}
-          </div>
-          <div class="portal-cta">
-            <button class="portal-cta-btn" data-type="${current.key}">${current.cta} →</button>
-          </div>
-        </div>
-      </div>`;
-
-    // ---- Image fallback: probe portal card covers, strip inline style on error ----
-    app.querySelectorAll('.portal-card-cover').forEach(cover => {
-      const bg = cover.style.backgroundImage;
-      const match = bg.match(/url\(['"]?(https?:[^'"\)]+)['"]?\)/);
-      if (!match) return;
-      const img = new Image();
-      img.onerror = () => { cover.style.backgroundImage = ''; };
-      img.src = match[1];
-    });
-
-    // ---- Portal Particles (per-aesthetic ambient effects) ----
-    const particleContainer = app.querySelector('#portal-particles');
-    const spawnDustMotes = () => {
-      if (!particleContainer) return;
-      particleContainer.innerHTML = '';
-      for (let i = 0; i < 25; i++) {
-        const mote = document.createElement('div');
-        const isLarge = Math.random() > 0.7;
-        const isBright = Math.random() > 0.8;
-        mote.className = `dust-mote${isLarge ? ' large' : ''}${isBright ? ' bright' : ''}`;
-        mote.style.cssText = `
-          left:${Math.random() * 100}%;top:${Math.random() * 100}%;
-          --dust-dur:${6 + Math.random() * 10}s;--dust-delay:${-Math.random() * 10}s;
-          --dust-x1:${(Math.random() - .5) * 40}px;--dust-y1:${(Math.random() - .5) * 50}px;
-          --dust-x2:${(Math.random() - .5) * 60}px;--dust-y2:${(Math.random() - .5) * 40}px;
-          --dust-x3:${(Math.random() - .5) * 50}px;--dust-y3:${(Math.random() - .5) * 60}px;
-          --dust-x4:${(Math.random() - .5) * 45}px;--dust-y4:${(Math.random() - .5) * 35}px;
-          --dust-x5:${(Math.random() - .5) * 55}px;--dust-y5:${(Math.random() - .5) * 45}px;
-          --dust-s1:${.5 + Math.random() * .8};--dust-s2:${.6 + Math.random() * .7};
-          --dust-s3:${.5 + Math.random() * .9};--dust-s4:${.6 + Math.random() * .8};--dust-s5:${.5 + Math.random() * .7};
-          --dust-o1:${.15 + Math.random() * .3};--dust-o2:${.25 + Math.random() * .4};
-          --dust-o3:${.15 + Math.random() * .3};--dust-o4:${.2 + Math.random() * .4};--dust-o5:${.1 + Math.random() * .3};
-        `;
-        particleContainer.appendChild(mote);
-      }
-    };
-    const spawnGrain = () => {
-      if (!particleContainer) return;
-      particleContainer.innerHTML = '';
-      for (let i = 0; i < 60; i++) {
-        const g = document.createElement('div');
-        const isLarge = Math.random() > 0.85;
-        const isColored = Math.random() > 0.9;
-        g.className = `grain-particle${isLarge ? ' large' : ''}${isColored ? ' colored' : ''}`;
-        g.style.cssText = `left:${Math.random() * 100}%;top:${Math.random() * 100}%;--grain-dur:${0.08 + Math.random() * 0.2}s;--grain-delay:${-Math.random() * 2}s`;
-        particleContainer.appendChild(g);
-      }
-    };
-    const spawnScanlines = () => {
-      if (!particleContainer) return;
-      particleContainer.innerHTML = '';
-      for (let i = 0; i < 12; i++) {
-        const sl = document.createElement('div');
-        const isThick = i % 4 === 0;
-        const isBright = i % 6 === 0;
-        sl.className = `scanline${isThick ? ' thick' : ''}${isBright ? ' bright' : ''}`;
-        sl.style.cssText = `top:${(i / 12) * 100}%;--scan-dur:${3 + Math.random() * 4}s;animation-delay:${-Math.random() * 4}s`;
-        particleContainer.appendChild(sl);
-      }
-    };
-    const spawnPixels = () => {
-      if (!particleContainer) return;
-      particleContainer.innerHTML = '';
-      for (let i = 0; i < 30; i++) {
-        const px = document.createElement('div');
-        const isPink = Math.random() > 0.6;
-        const isSmall = Math.random() > 0.7;
-        const isLarge = !isSmall && Math.random() > 0.85;
-        px.className = `pixel-particle${isPink ? ' pink' : ''}${isSmall ? ' small' : ''}${isLarge ? ' large' : ''}`;
-        px.style.cssText = `
-          left:${Math.random() * 100}%;top:${Math.random() * 100}%;
-          --px-dur:${4 + Math.random() * 8}s;--px-delay:${-Math.random() * 8}s;
-          --px-x1:${(Math.random() - .5) * 30}px;--px-y1:${(Math.random() - .5) * 40}px;
-          --px-x2:${(Math.random() - .5) * 50}px;--px-y2:${(Math.random() - .5) * 35}px;
-          --px-x3:${(Math.random() - .5) * 40}px;--px-y3:${(Math.random() - .5) * 50}px;
-          --px-x4:${(Math.random() - .5) * 35}px;--px-y4:${(Math.random() - .5) * 30}px;
-          --px-x5:${(Math.random() - .5) * 45}px;--px-y5:${(Math.random() - .5) * 40}px;
-        `;
-        particleContainer.appendChild(px);
-      }
-    };
-    const particleSpawners = { books: spawnDustMotes, movies: spawnGrain, tv: spawnScanlines, games: spawnPixels };
-    const particleClasses = { books: 'portal-dust', movies: 'portal-grain', tv: 'portal-scanlines', games: 'portal-pixels' };
-    const particleCache = {};
-    const setPortalParticles = (type) => {
-      if (!particleContainer) return;
-      // Remove old type class, add new one — keep active always on
-      Object.values(particleClasses).forEach(cls => particleContainer.classList.remove(cls));
-      const typeClass = particleClasses[type];
-      if (typeClass) particleContainer.classList.add(typeClass);
-      particleContainer.classList.add('active');
-      // Use cached particles or spawn fresh
-      if (particleCache[type]) {
-        particleContainer.innerHTML = particleCache[type];
-      } else {
-        const spawner = particleSpawners[type];
-        if (spawner) { spawner(); particleCache[type] = particleContainer.innerHTML; }
-      }
-    };
-    // Set initial active class and spawn
-    if (particleClasses[current.key]) particleContainer.classList.add(particleClasses[current.key]);
-    const initSpawner = particleSpawners[current.key];
-    if (initSpawner) initSpawner();
-    if (particleContainer && initSpawner) particleCache[current.key] = particleContainer.innerHTML;
-
-    // ---- Parallax: subtle particle shift on mouse/gyroscope ----
-    const parallaxMax = 18; // max px shift
-    let parallaxX = 0, parallaxY = 0, parallaxRaf = null;
-    const applyParallax = () => {
-      if (particleContainer) particleContainer.style.transform = `translate(${parallaxX}px, ${parallaxY}px)`;
-      parallaxRaf = null;
-    };
-    const onMouseMove = (e) => {
-      if (isDragging) return; // skip parallax during carousel drag
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      parallaxX = ((e.clientX - cx) / cx) * parallaxMax;
-      parallaxY = ((e.clientY - cy) / cy) * parallaxMax;
-      if (!parallaxRaf) parallaxRaf = requestAnimationFrame(applyParallax);
-    };
-    const onDeviceOrientation = (e) => {
-      // gamma: left-right tilt (-90 to 90), beta: front-back tilt (-180 to 180)
-      if (e.gamma != null && e.beta != null) {
-        parallaxX = Math.max(-parallaxMax, Math.min(parallaxMax, (e.gamma / 45) * parallaxMax));
-        parallaxY = Math.max(-parallaxMax, Math.min(parallaxMax, ((e.beta - 45) / 45) * parallaxMax));
-        if (!parallaxRaf) parallaxRaf = requestAnimationFrame(applyParallax);
-      }
-    };
-    window.addEventListener('mousemove', onMouseMove, { passive: true });
-    window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true });
-    const origCleanup = this._portalCleanup;
-    this._portalCleanup = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('deviceorientation', onDeviceOrientation);
-      if (particleContainer) particleContainer.style.transform = '';
-      if (origCleanup) origCleanup();
-    };
-
-    // ---- Carousel interaction ----
-    const carousel = app.querySelector('.portal-carousel');
-    const cardsEl = app.querySelectorAll('.portal-card');
-    const dots = app.querySelectorAll('.portal-dot');
-    let dragStartX = 0;
-    let dragDelta = 0;
-    let isDragging = false;
-
-    const setPortalAesthetic = (type) => {
-      const bg = app.querySelector('.portal-bg');
-      if (bg) bg.dataset.aesthetic = type;
-      setPortalParticles(type);
-    };
-
-    const updateCarousel = (activeType) => {
-      const idx = types.findIndex(t => t.key === activeType);
-      if (idx < 0) return;
-      this.state.mediaType = activeType;
-      this._syncFiltersToURL();
-      setPortalAesthetic(activeType);
-
-      cardsEl.forEach((card, i) => {
-        const offset = i - idx;
-        const isActive = i === idx;
-        card.style.transform = `translateX(${offset * 90}px) translateZ(${isActive ? 60 : -40}px) rotateY(${offset * -8}deg) scale(${isActive ? 1 : .85})`;
-        card.style.opacity = isActive ? 1 : Math.max(0.3, 0.6 - Math.abs(offset) * 0.15);
-        card.style.zIndex = isActive ? 5 : 2 - Math.abs(offset);
-        card.classList.toggle('active', isActive);
-      });
-      dots.forEach((dot, i) => {
-        dot.classList.toggle('active', i === idx);
-      });
-      // Update CTA
-      const ctaBtn = app.querySelector('.portal-cta-btn');
-      if (ctaBtn) {
-        ctaBtn.dataset.type = activeType;
-        ctaBtn.textContent = types[idx].cta + ' →';
-      }
-    };
-
-    // Swipe/drag on carousel
-    const onPointerDown = (e) => {
-      isDragging = true;
-      dragStartX = e.touches ? e.touches[0].clientX : e.clientX;
-      dragDelta = 0;
-    };
-    const onPointerMove = (e) => {
-      if (!isDragging) return;
-      const x = e.touches ? e.touches[0].clientX : e.clientX;
-      dragDelta = x - dragStartX;
-      // Apply live drag offset
-      cardsEl.forEach((card, i) => {
-        const curIdx = types.findIndex(t => t.key === this.state.mediaType);
-        const offset = i - curIdx;
-        const isActive = i === curIdx;
-        const dragOffset = dragDelta * 0.4;
-        card.style.transition = 'none';
-        card.style.transform = `translateX(${offset * 90 + dragOffset}px) translateZ(${isActive ? 60 : -40}px) rotateY(${offset * -8}deg) scale(${isActive ? 1 : .85})`;
-      });
-    };
-    const onPointerUp = () => {
-      if (!isDragging) return;
-      isDragging = false;
-      const finalDelta = dragDelta;
-      dragDelta = 0;
-      cardsEl.forEach(card => { card.style.transition = ''; });
-      if (Math.abs(finalDelta) > 50) {
-        const curIdx = types.findIndex(t => t.key === this.state.mediaType);
-        const nextIdx = finalDelta < 0 ? Math.min(curIdx + 1, types.length - 1) : Math.max(curIdx - 1, 0);
-        if (nextIdx !== curIdx) {
-          updateCarousel(types[nextIdx].key);
-          if (navigator.vibrate) navigator.vibrate(10);
-        }
-      } else {
-        updateCarousel(this.state.mediaType);
-      }
-    };
-
-    carousel.addEventListener('touchstart', onPointerDown, { passive: true });
-    carousel.addEventListener('touchmove', onPointerMove, { passive: true });
-    carousel.addEventListener('touchend', onPointerUp);
-    carousel.addEventListener('mousedown', (e) => { e.preventDefault(); onPointerDown(e); });
-    window.addEventListener('mousemove', onPointerMove);
-    window.addEventListener('mouseup', onPointerUp);
-    const carouselPrevCleanup = this._portalCleanup;
-    this._portalCleanup = () => {
-      window.removeEventListener('mousemove', onPointerMove);
-      window.removeEventListener('mouseup', onPointerUp);
-      if (carouselPrevCleanup) carouselPrevCleanup();
-    };
-
-    // Click on cards + keyboard accessibility
-    cardsEl.forEach(card => {
-      card.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          card.click();
-        }
-      });
-      card.addEventListener('click', () => {
-        if (Math.abs(dragDelta) > 20) { dragDelta = 0; return; } // ignore click after drag
-        dragDelta = 0;
-        const type = card.dataset.type;
-        if (type === this.state.mediaType) {
-          // Active card tapped — expand and proceed
-          this._portalExpandAndProceed(app, card, types);
-        } else {
-          updateCarousel(type);
-          if (navigator.vibrate) navigator.vibrate(10);
-        }
-      });
-    });
-
-    // Click on dots
-    dots.forEach((dot, i) => {
-      dot.addEventListener('click', () => updateCarousel(types[i].key));
-    });
-
-    // CTA button
-    app.querySelector('.portal-cta-btn')?.addEventListener('click', () => {
-      const activeCard = app.querySelector('.portal-card.active');
-      if (activeCard) this._portalExpandAndProceed(app, activeCard, types);
-    });
-
-    // Lang toggle
-    app.querySelector('[data-lang="de"]')?.addEventListener('click', () => { this.lang = 'de'; this.tr = LANG.de; this._genreMap = getTMDBGenreMap('de'); this._syncFiltersToURL(); this.save(); this.render(); });
-    app.querySelector('[data-lang="en"]')?.addEventListener('click', () => { this.lang = 'en'; this.tr = LANG.en; this._genreMap = getTMDBGenreMap('en'); this._syncFiltersToURL(); this.save(); this.render(); });
-  }
-
-  _portalExpandAndProceed(app, cardEl, types) {
-    if (this._portalCleanup) { this._portalCleanup(); this._portalCleanup = null; }
-    if (navigator.vibrate) navigator.vibrate([15, 30, 15]);
-    cardEl.classList.add('expanding');
-    setTimeout(() => {
-      this.state.onboardingStep = 1; // vibe matrix
-      this.save();
-      this.render();
-    }, 400);
-  }
-
-  _renderVibeMatrixScreen(app) {
-    // Clean up previous portal/vibe listeners
-    if (this._portalCleanup) { this._portalCleanup(); this._portalCleanup = null; }
-    const de = this.lang === 'de';
-    const sliders = [
-      { key: 'vibePacing', left: { emoji: '🧘', label: this.tr.vibePacingSlow }, right: { emoji: '⚡', label: this.tr.vibePacingFast } },
-      { key: 'vibeTone', left: { emoji: '🌧️', label: this.tr.vibeToneDark }, right: { emoji: '☀️', label: this.tr.vibeToneLight } },
-      { key: 'vibeComplex', left: { emoji: '🍿', label: this.tr.vibeComplexPopcorn }, right: { emoji: '🧠', label: this.tr.vibeComplexDeep } },
-    ];
-
-    const isGames = this.state.mediaType === 'games';
-    const vibeDots = isGames
-      ? `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div><div class="step-line"></div><div class="step-dot"></div><div class="step-line"></div><div class="step-dot"></div><div class="step-line"></div><div class="step-dot"></div></div>`
-      : `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div><div class="step-line"></div><div class="step-dot"></div><div class="step-line"></div><div class="step-dot"></div></div>`;
-    app.innerHTML = `
-      <div class="vibe-matrix">
-        ${vibeDots}
-        <h1 class="vibe-matrix-title">${this.tr.vibeTitle}</h1>
-        <p class="vibe-matrix-sub">${de ? 'Ziehe die Orbs an deine bevorzugte Position' : 'Drag the orbs to your preferred position'}</p>
-        <div class="vibe-slider-group">
-          ${sliders.map(s => `
-            <div class="vibe-slider" data-key="${s.key}">
-              <div class="vibe-slider-labels">
-                <span class="vibe-slider-label${this.state[s.key] < 40 ? ' active' : ''}" data-side="left">
-                  <span class="vibe-emoji">${s.left.emoji}</span>${s.left.label}
-                </span>
-                <span class="vibe-slider-label${this.state[s.key] > 60 ? ' active' : ''}" data-side="right">
-                  <span class="vibe-emoji">${s.right.emoji}</span>${s.right.label}
-                </span>
-              </div>
-              <div class="vibe-track-container">
-                <div class="vibe-track">
-                  <div class="vibe-track-fill" style="width:${this.state[s.key]}%"></div>
-                </div>
-                <div class="vibe-track-zones">
-                  <div class="vibe-zone"><div class="vibe-zone-dot${this.state[s.key] < 33 ? ' active' : ''}"></div></div>
-                  <div class="vibe-zone"><div class="vibe-zone-dot${this.state[s.key] >= 33 && this.state[s.key] <= 66 ? ' active' : ''}"></div></div>
-                  <div class="vibe-zone"><div class="vibe-zone-dot${this.state[s.key] > 66 ? ' active' : ''}"></div></div>
-                </div>
-                <div class="vibe-orb" style="left:${this.state[s.key]}%"></div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-        <button class="btn btn-primary btn-start" style="margin-top:16px">${de ? 'Weiter' : 'Continue'} →</button>
-      </div>`;
-
-    // Spring-physics drag — single active slider pattern with shared window listeners
-    let activeSlider = null;
-    const onGlobalMove = (e) => {
-      if (!activeSlider) return;
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      activeSlider.setPct(activeSlider.getPercent(clientX));
-    };
-    const onGlobalUp = () => {
-      if (!activeSlider) return;
-      const s = activeSlider;
-      activeSlider = null;
-      s.orb.classList.remove('dragging');
-      const snapPoints = [0, 50, 100];
-      const curTarget = this.state[s.key];
-      const closest = snapPoints.reduce((a, b) => Math.abs(b - curTarget) < Math.abs(a - curTarget) ? b : a);
-      if (Math.abs(closest - curTarget) < 12) {
-        s.setPct(closest);
-        if (navigator.vibrate) navigator.vibrate(8);
-      }
-      this.save();
-    };
-    window.addEventListener('mousemove', onGlobalMove);
-    window.addEventListener('touchmove', onGlobalMove, { passive: true });
-    window.addEventListener('mouseup', onGlobalUp);
-    window.addEventListener('touchend', onGlobalUp);
-
-    app.querySelectorAll('.vibe-slider').forEach(slider => {
-      const key = slider.dataset.key;
-      const container = slider.querySelector('.vibe-track-container');
-      const orb = slider.querySelector('.vibe-orb');
-      const fill = slider.querySelector('.vibe-track-fill');
-      const labels = slider.querySelectorAll('.vibe-slider-label');
-      const zones = slider.querySelectorAll('.vibe-zone-dot');
-      let targetPct = this.state[key];
-      let currentPct = targetPct;
-      let velocity = 0;
-      let rafId = null;
-      const stiffness = 0.15;
-      const damping = 0.7;
-
-      let lastZone = targetPct < 33 ? 0 : targetPct <= 66 ? 1 : 2;
-      const updateVisuals = (pct) => {
-        orb.style.left = pct + '%';
-        fill.style.width = pct + '%';
-        labels[0].classList.toggle('active', pct < 40);
-        labels[1].classList.toggle('active', pct > 60);
-        zones[0].classList.toggle('active', pct < 33);
-        zones[1].classList.toggle('active', pct >= 33 && pct <= 66);
-        zones[2].classList.toggle('active', pct > 66);
-        orb.setAttribute('aria-valuenow', Math.round(pct));
-        // Haptic + visual pulse when crossing zone boundaries
-        const newZone = pct < 33 ? 0 : pct <= 66 ? 1 : 2;
-        if (newZone !== lastZone) {
-          lastZone = newZone;
-          if (navigator.vibrate) navigator.vibrate(6);
-          orb.classList.add('pulse');
-          setTimeout(() => orb.classList.remove('pulse'), 400);
-        }
-      };
-
-      const springStep = () => {
-        const force = (targetPct - currentPct) * stiffness;
-        velocity = (velocity + force) * damping;
-        currentPct += velocity;
-        if (Math.abs(targetPct - currentPct) < 0.1 && Math.abs(velocity) < 0.1) {
-          currentPct = targetPct;
-          updateVisuals(currentPct);
-          rafId = null;
-          return;
-        }
-        updateVisuals(currentPct);
-        rafId = requestAnimationFrame(springStep);
-      };
-
-      const setPct = (pct) => {
-        targetPct = Math.max(0, Math.min(100, pct));
-        this.state[key] = Math.round(targetPct);
-        if (!rafId) rafId = requestAnimationFrame(springStep);
-      };
-
-      const getPercent = (clientX) => {
-        const rect = container.getBoundingClientRect();
-        return ((clientX - rect.left) / rect.width) * 100;
-      };
-
-      const sliderEntry = { key, orb, setPct, getPercent };
-
-      const onDown = (e) => {
-        e.preventDefault();
-        activeSlider = sliderEntry;
-        orb.classList.add('dragging');
-        velocity = 0;
-        if (navigator.vibrate) navigator.vibrate(5);
-        // Spawn micro-particles on grab
-        const rect = orb.getBoundingClientRect();
-        for (let i = 0; i < 4; i++) {
-          const p = document.createElement('span');
-          p.className = 'vibe-spark';
-          const angle = Math.random() * Math.PI * 2;
-          const dist = 20 + Math.random() * 30;
-          p.style.cssText = `left:${rect.left + rect.width/2}px;top:${rect.top + rect.height/2}px;--sx:${Math.cos(angle)*dist}px;--sy:${Math.sin(angle)*dist}px`;
-          document.body.appendChild(p);
-          setTimeout(() => p.remove(), 600);
-        }
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        setPct(getPercent(clientX));
-      };
-
-      container.addEventListener('touchstart', onDown, { passive: false });
-      container.addEventListener('mousedown', onDown);
-
-      // Keyboard accessibility
-      const leftLabel = labels[0]?.textContent || '';
-      const rightLabel = labels[1]?.textContent || '';
-      orb.setAttribute('role', 'slider');
-      orb.setAttribute('aria-label', `${leftLabel} — ${rightLabel}`);
-      orb.setAttribute('aria-valuemin', '0');
-      orb.setAttribute('aria-valuemax', '100');
-      orb.setAttribute('aria-valuenow', String(this.state[key]));
-      orb.setAttribute('tabindex', '0');
-      orb.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          setPct(Math.min(100, targetPct + 5));
-          this.save();
-        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-          e.preventDefault();
-          setPct(Math.max(0, targetPct - 5));
-          this.save();
-        }
-      });
-    });
-
-    // Cleanup window listeners when leaving vibe matrix
-    const vibeCleanup = () => {
-      window.removeEventListener('mousemove', onGlobalMove);
-      window.removeEventListener('touchmove', onGlobalMove);
-      window.removeEventListener('mouseup', onGlobalUp);
-      window.removeEventListener('touchend', onGlobalUp);
-    };
-    const prevCleanup = this._portalCleanup;
-    this._portalCleanup = () => { vibeCleanup(); if (prevCleanup) prevCleanup(); };
-
-    app.querySelector('.btn-start')?.addEventListener('click', () => {
-      this.state.onboardingStep = 2;
-      this.save();
-      this.render();
-    });
-  }
-
-  _renderWhoWatchingScreen(app) {
-    const modes = [
-      { key:'solo', icon:'👤', emoji:'🎭' },
-      { key:'dateNight', icon:'💑', emoji:'🌹' },
-      { key:'family', icon:'👨‍👩‍👧‍👦', emoji:'🧸' }
-    ];
-    const isGames = this.state.mediaType === 'games';
-    const dots = isGames
-      ? `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div><div class="step-line"></div><div class="step-dot"></div><div class="step-line"></div><div class="step-dot"></div></div>`
-      : `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div><div class="step-line"></div><div class="step-dot"></div></div>`;
-    app.innerHTML = `
-      <div class="onboarding who-watching">
-        ${dots}
-        <h1>${this.tr.whoWatching}</h1>
-        <p class="onboarding-sub">${this.tr.whoWatchingSub}</p>
-        <div class="watch-mode-grid">
-          ${modes.map(m => `
-            <button class="watch-mode-card ${this.state.watchMode === m.key ? 'selected' : ''}" data-mode="${m.key}">
-              <span class="watch-mode-icon">${m.icon}</span>
-              <div class="watch-mode-text">
-                <span class="watch-mode-label">${this.tr[m.key]}</span>
-                <span class="watch-mode-sub">${this.tr[m.key + 'Sub']}</span>
-              </div>
-            </button>
-          `).join('')}
-        </div>
-        <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
-      </div>`;
-    app.querySelectorAll('.watch-mode-card').forEach(card => {
-      card.addEventListener('click', () => {
-        this.state.watchMode = card.dataset.mode;
-        app.querySelectorAll('.watch-mode-card').forEach(c => c.classList.remove('selected'));
-        card.classList.add('selected');
-      });
-    });
-    app.querySelector('.btn-start')?.addEventListener('click', () => {
-      this._applyWatchModeFilters();
-      this.state.onboardingStep = 3;
-      this.save();
-      this.render();
-    });
-  }
-
-  _applyWatchModeFilters() {
-    const mode = WATCH_MODES[this.state.watchMode] || WATCH_MODES.solo;
-    if (mode.hardBlock.length && this.state.mediaType !== 'books') {
-      this.state.blockedGenres = mode.hardBlock;
-    }
-    if (mode.boost.length && this.state.mediaType !== 'books') {
-      this.state.boostedMoods = mode.boost;
-    }
-  }
-
-  _renderPlatformScreen(app) {
-    if (!this.state.selectedPlatforms) this.state.selectedPlatforms = [];
-    const platforms = GAME_PLATFORMS;
-    app.innerHTML = `
-      <div class="onboarding who-watching">
-        <div class="onboarding-steps">
-          <div class="step-dot completed">✓</div>
-          <div class="step-line filled"></div>
-          <div class="step-dot completed">✓</div>
-          <div class="step-line filled"></div>
-          <div class="step-dot completed">✓</div>
-          <div class="step-line filled"></div>
-          <div class="step-dot active"></div>
-          <div class="step-line"></div>
-          <div class="step-dot"></div>
-        </div>
-        <h1>${this.tr.platforms}</h1>
-        <p class="onboarding-sub">${this.lang === 'de' ? 'Waehle deine Plattformen' : 'Select your platforms'}</p>
-        <div class="platform-grid">
-          ${platforms.map(p => `
-            <button class="platform-card ${this.state.selectedPlatforms.includes(p.id) ? 'selected' : ''}" data-pid="${p.id}">
-              <span class="platform-icon">${p.icon}</span>
-              <span class="platform-name">${p.name}</span>
-            </button>
-          `).join('')}
-        </div>
-        <button class="btn btn-primary btn-start">${this.tr.discover} →</button>
-      </div>`;
-    app.querySelectorAll('.platform-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const pid = parseInt(card.dataset.pid);
-        const idx = this.state.selectedPlatforms.indexOf(pid);
-        if (idx >= 0) {
-          this.state.selectedPlatforms.splice(idx, 1);
-          card.classList.remove('selected');
-        } else {
-          this.state.selectedPlatforms.push(pid);
-          card.classList.add('selected');
-        }
-      });
-    });
-    app.querySelector('.btn-start')?.addEventListener('click', () => {
-      this.state.onboardingStep = 4;
-      this.save();
-      this.render();
-    });
-  }
-
-  _renderRapidFireScreen(app) {
-    if (!this._rapidFireItems) {
-      this._rapidFireItems = this._getRapidFireItems();
-      this._rapidFireIndex = 0;
-      this._rapidFireLikes = [];
-      this._rapidFireStart = Date.now();
-    }
-    const items = this._rapidFireItems;
-    const idx = this._rapidFireIndex;
-    if (idx >= items.length || (Date.now() - this._rapidFireStart > 15000 && idx >= 3)) {
-      return this._completeRapidFire(app);
-    }
-    const item = items[idx];
-    const isGames = this.state.mediaType === 'games';
-    const stepDots = isGames
-      ? `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div></div>`
-      : `<div class="onboarding-steps"><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot completed">✓</div><div class="step-line filled"></div><div class="step-dot active"></div></div>`;
-    app.innerHTML = `
-      <div class="onboarding rapid-fire">
-        ${stepDots}
-        <div class="rapid-fire-header">
-          <h1>${this.tr.rapidFireTitle}</h1>
-          <p>${this.tr.rapidFireSub}</p>
-          <div class="rapid-fire-timer">
-            <div class="timer-bar" style="width:${Math.min((idx / items.length) * 100, 100)}%"></div>
-          </div>
-          <span class="rapid-fire-count">${idx + 1}/${items.length}</span>
-        </div>
-        <div class="rapid-fire-card" data-id="${escapeHTML(item.id)}">
-          ${item.cover ? `<img class="rf-cover" src="${escapeHTML(item.cover)}" alt="">` : `<div class="rf-cover placeholder">🎬</div>`}
-          <div class="rf-info">
-            <h2>${escapeHTML(item.title)}</h2>
-            ${item.year ? `<span>${item.year}</span>` : ''}
-            ${item.genres ? `<p class="rf-genres">${item.genres.slice(0,3).map(g => { const id = typeof g === 'number' ? g : g; const name = typeof g === 'string' ? g : (this._genreMap[g] || g); const icon = getGenreIcon(id, this.state.mediaType, this.lang); return `${icon} ${name}`; }).join(' · ')}</p>` : ''}
-          </div>
-          <span class="swipe-stamp swipe-stamp-like">${this.tr.like}</span>
-          <span class="swipe-stamp swipe-stamp-nope">${this.tr.nope}</span>
-        </div>
-        <div class="swipe-actions rapid-fire-actions">
-          <button class="btn btn-nope rf-nope" title="Pass">✕</button>
-          <button class="btn btn-like rf-like" title="Like">♥</button>
-        </div>
-      </div>`;
-    const cardEl = app.querySelector('.rapid-fire-card');
-    if (cardEl) {
-      if (this._rapidFireEngine) this._rapidFireEngine.destroy();
-      this._rapidFireEngine = new SwipeEngine(cardEl, dir => {
-        if (dir === 'right') {
-          this._rapidFireLikes.push(item);
-          document.body.classList.add('swipe-flash-right');
-          setTimeout(() => document.body.classList.remove('swipe-flash-right'), 400);
-        } else if (dir === 'left') {
-          document.body.classList.add('swipe-flash-left');
-          setTimeout(() => document.body.classList.remove('swipe-flash-left'), 400);
-        }
-        this._rapidFireIndex++;
-        this.render();
-      });
-    }
-    app.querySelector('.rf-like')?.addEventListener('click', () => {
-      this._rapidFireLikes.push(item);
-      this._rapidFireIndex++;
-      this.render();
-    });
-    app.querySelector('.rf-nope')?.addEventListener('click', () => {
-      this._rapidFireIndex++;
-      this.render();
-    });
-  }
-
-  _getRapidFireItems() {
-    if (this.state.mediaType === 'games') {
-      const pool = ICONIC_GAMES.slice(0, 10).map(g => ({
-        id: `rf-${g.id}`, title: g.name, year: g.year,
-        cover: g.steamAppId ? `https://cdn.akamai.steamstatic.com/steam/apps/${g.steamAppId}/header.jpg` : '',
-        genres: g.tags, source: 'rapid-fire', type: 'game'
-      }));
-      return shuffleArray(pool);
-    }
-    if (this.state.mediaType === 'tv') {
-      const pool = [
-        { id:'rf-t1', title:'Stranger Things', year:2016, cover:'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg', genres:[18,10765,35] },
-        { id:'rf-t2', title:'Breaking Bad', year:2008, cover:'https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg', genres:[18,80,53] },
-        { id:'rf-t3', title:'The Office', year:2005, cover:'https://image.tmdb.org/t/p/w500/7DJKHzAi83BmQrWLrYYOqcoKfhR.jpg', genres:[35] },
-        { id:'rf-t4', title:'Game of Thrones', year:2011, cover:'https://image.tmdb.org/t/p/w500/1XS1oqL89opfnbLl8WnZY1O1uJx.jpg', genres:[18,10759,10765] },
-        { id:'rf-t5', title:'Black Mirror', year:2011, cover:'https://image.tmdb.org/t/p/w500/seN6rRfN0I6n8iDXjlSMk1QjNcq.jpg', genres:[9648,878,53] },
-        { id:'rf-t6', title:'Dark', year:2017, cover:'https://image.tmdb.org/t/p/w500/apbrbWs8M9lyOpJYU5WXrpFbk1Z.jpg', genres:[18,9648,878] },
-        { id:'rf-t7', title:'The Crown', year:2016, cover:'https://image.tmdb.org/t/p/w500/1M876KPjulVwppEpldhdc8V4o68.jpg', genres:[18,36] },
-        { id:'rf-t8', title:'Squid Game', year:2021, cover:'https://image.tmdb.org/t/p/w500/dDlEmu3EZ0Pgg93K2SVNLCjCSvE.jpg', genres:[18,10759,53] },
-        { id:'rf-t9', title:'Succession', year:2018, cover:'https://image.tmdb.org/t/p/w500/z0XiwdrCQ9yVIr4O0pxzaAYRxdW.jpg', genres:[18,35] },
-        { id:'rf-t10', title:'The Mandalorian', year:2019, cover:'https://image.tmdb.org/t/p/w500/sWgBv7LV2PRoQgkxwlibdGXKz1S.jpg', genres:[10759,878,12] }
-      ];
-      return shuffleArray(pool);
-    }
-    if (this.state.mediaType === 'books') {
-      const pool = [
-        { id:'rf-b1', title:'Der Herr der Ringe', year:1954, cover:'https://covers.openlibrary.org/b/id/6979861-M.jpg', genres:['fantasy'], author:'J.R.R. Tolkien', source:'rapid-fire', type:'book' },
-        { id:'rf-b2', title:'1984', year:1949, cover:'https://covers.openlibrary.org/b/id/8575741-M.jpg', genres:['scifi'], author:'George Orwell', source:'rapid-fire', type:'book' },
-        { id:'rf-b3', title:'Harry Potter', year:1997, cover:'https://covers.openlibrary.org/b/id/7888716-M.jpg', genres:['fantasy'], author:'J.K. Rowling', source:'rapid-fire', type:'book' },
-        { id:'rf-b4', title:'Die unendliche Geschichte', year:1979, cover:'https://covers.openlibrary.org/b/id/8252085-M.jpg', genres:['fantasy'], author:'Michael Ende', source:'rapid-fire', type:'book' },
-        { id:'rf-b5', title:'Der Steppenwolf', year:1927, cover:'https://covers.openlibrary.org/b/id/8256561-M.jpg', genres:['historical'], author:'Hermann Hesse', source:'rapid-fire', type:'book' },
-        { id:'rf-b6', title:'Tschick', year:2010, cover:'https://covers.openlibrary.org/b/id/7432041-M.jpg', genres:['ya'], author:'Wolfgang Herrndorf', source:'rapid-fire', type:'book' },
-        { id:'rf-b7', title:'Das Parfum', year:1985, cover:'https://covers.openlibrary.org/b/id/7481926-M.jpg', genres:['thriller'], author:'Patrick Süskind', source:'rapid-fire', type:'book' },
-        { id:'rf-b8', title:'Fahrenheit 451', year:1953, cover:'https://covers.openlibrary.org/b/id/8266056-M.jpg', genres:['scifi'], author:'Ray Bradbury', source:'rapid-fire', type:'book' },
-        { id:'rf-b9', title:'Die Vermessung der Welt', year:2005, cover:'https://covers.openlibrary.org/b/id/12630983-M.jpg', genres:['historical'], author:'Daniel Kehlmann', source:'rapid-fire', type:'book' },
-        { id:'rf-b10', title:'Eragon', year:2003, cover:'https://covers.openlibrary.org/b/id/8315859-M.jpg', genres:['fantasy'], author:'Christopher Paolini', source:'rapid-fire', type:'book' }
-      ];
-      return shuffleArray(pool);
-    }
-    const pool = [
-      { id:'rf-1', title:'The Matrix', year:1999, cover:'https://image.tmdb.org/t/p/w500/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg', genres:[28,878] },
-      { id:'rf-2', title:'Barbie', year:2023, cover:'https://image.tmdb.org/t/p/w500/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg', genres:[35,14] },
-      { id:'rf-3', title:'Parasite', year:2019, cover:'https://image.tmdb.org/t/p/w500/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg', genres:[35,53,18] },
-      { id:'rf-4', title:'Spider-Man: Into the Spider-Verse', year:2018, cover:'https://image.tmdb.org/t/p/w500/iiZZ8QEtAl2JTVGqiUp9KTvzC1.jpg', genres:[16,28,878] },
-      { id:'rf-5', title:'Everything Everywhere All at Once', year:2022, cover:'https://image.tmdb.org/t/p/w500/w3LxiVYdWWRvEVdn5RYq6jIqkb1.jpg', genres:[28,12,878] },
-      { id:'rf-6', title:'The Notebook', year:2004, cover:'https://image.tmdb.org/t/p/w500/qXNodH36mHqY7O4bQI3Pmw1c5T1.jpg', genres:[10749,18] },
-      { id:'rf-7', title:'Inception', year:2010, cover:'https://image.tmdb.org/t/p/w500/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg', genres:[28,878,12] },
-      { id:'rf-8', title:'The Shining', year:1980, cover:'https://image.tmdb.org/t/p/w500/nRj5511mZdTl4saWEPoj9QroTIu.jpg', genres:[27,53] },
-      { id:'rf-9', title:'Spirited Away', year:2001, cover:'https://image.tmdb.org/t/p/w500/39wmItIWsg5sZMyRUHLkWBkuVcm.jpg', genres:[16,14,12] },
-      { id:'rf-10', title:'Mad Max: Fury Road', year:2015, cover:'https://image.tmdb.org/t/p/w500/8tZYtuWezp8JbcsvHYO0O46tFBO.jpg', genres:[28,12,878] }
-    ];
-    return shuffleArray(pool);
-  }
-
-  _completeRapidFire(app) {
-    this._rapidFireLikes.forEach(item => {
-      if (!this.watchlist.find(w => w.id === item.id)) {
-        this.watchlist.push({ ...item, source: 'rapid-fire' });
-        addToWatchlist({ ...item, source: 'rapid-fire' });
-      }
-    });
-    this.state.hasCompletedOnboarding = true;
-    this.state.onboardingStep = 5;
-    this.save();
-    this.render();
-  }
-
-  // ===== BOOK QUIZ (missing in original) =====
-  renderQuiz(app) {
-    const quiz = (BOOK_QUIZ[this.lang] || BOOK_QUIZ.de);
-    const currentQ = this._quizIndex || 0;
-    if (currentQ >= quiz.length) {
-      this.state.hasCompletedQuiz = true;
-      this.save();
-      this.render();
-      return;
-    }
-    const q = quiz[currentQ];
-    app.innerHTML = `
-      <div class="onboarding rapid-fire">
-        <div class="rapid-fire-header">
-          <h1>${this.t('quiz')}</h1>
-          <p>${escapeHTML(q.q)}</p>
-          <div class="rapid-fire-timer">
-            <div class="timer-bar" style="width:${((currentQ + 1) / quiz.length) * 100}%"></div>
-          </div>
-          <span class="rapid-fire-count">${currentQ + 1}/${quiz.length}</span>
-        </div>
-        <div class="watch-mode-grid" style="margin-top:20px">
-          ${q.a.map((ans, i) => `
-            <button class="watch-mode-card" data-idx="${i}">
-              <span class="watch-mode-label">${escapeHTML(ans)}</span>
-            </button>
-          `).join('')}
-        </div>
-      </div>`;
-    app.querySelectorAll('.watch-mode-card').forEach(card => {
-      card.addEventListener('click', () => {
-        this._quizIndex = (this._quizIndex || 0) + 1;
-        this.renderQuiz(app);
-      });
-    });
-  }
-
+  // Onboarding methods are in onboarding.js (mixed in via Object.assign)
   // ===== SKELETON LOADING =====
   _renderSkeleton(app) {
     if (this._filterLoading) {
@@ -1356,7 +960,8 @@ class App {
       // Use Sets for O(1) lookup instead of O(n) .find()
       const watchIds = new Set(this.watchlist.map(w => w.id));
       const dislikedIds = new Set(this.disliked.map(d => d.id));
-      let filtered = items.filter(i => !watchIds.has(i.id) && !dislikedIds.has(i.id));
+      const consumedIds = new Set((this.consumed || []).map(c => c.id));  // LIB-011: dedup consumed
+      let filtered = items.filter(i => !watchIds.has(i.id) && !dislikedIds.has(i.id) && !consumedIds.has(i.id));
 
       if (this.state.blockedGenres?.length && this.state.mediaType !== 'books') {
         filtered = filtered.filter(item => {
@@ -1721,6 +1326,7 @@ class App {
         <div class="discover-header">
           <button class="search-toggle" data-action="search" aria-label="${this.tr.search}">🔍</button>
           <span class="card-count-badge">${this.t('cardCount', `${this.currentCardIndex + 1}/${this.currentCards.length}`)}</span>
+          ${this._renderStreakPill()}
           <button class="blind-date-toggle ${isBlind ? 'active' : ''}" data-toggle="blind" aria-label="${this.tr.blindDate}">
             🎭 ${this.tr.blindDate}
           </button>
@@ -1785,17 +1391,116 @@ class App {
     if (cardEl) {
       if (this._cardCleanupFns) this._cardCleanupFns.forEach(fn => fn());
       this._cardCleanupFns = [];
+      // Collapsible nav: hide bottom nav on swipe start, show on idle
+      let navIdleTimer = null;
+      const showNav = () => {
+        document.body.classList.remove('swipe-active');
+        if (navIdleTimer) { clearTimeout(navIdleTimer); navIdleTimer = null; }
+      };
+      const queueNavHide = () => {
+        showNav();
+        navIdleTimer = setTimeout(() => document.body.classList.add('swipe-active'), 1500);
+      };
+      queueNavHide();
+      this._cardCleanupFns.push(() => {
+        if (navIdleTimer) clearTimeout(navIdleTimer);
+        showNav();
+      });
+      // Inject a small floating "handle" that taps reveal the chrome when hidden
+      if (!document.querySelector('.chrome-handle')) {
+        const handle = document.createElement('button');
+        handle.className = 'chrome-handle';
+        handle.setAttribute('aria-label', this.tr.discover || 'Discover');
+        // Exclude from keyboard tab order — the handle is a 4px-wide
+        // invisible affordance, not a real focusable target.
+        handle.setAttribute('tabindex', '-1');
+        document.body.appendChild(handle);
+        const onHandle = () => {
+          if (navIdleTimer) clearTimeout(navIdleTimer);
+          showNav();
+          navIdleTimer = setTimeout(() => document.body.classList.add('swipe-active'), 1500);
+        };
+        handle.addEventListener('click', onHandle);
+        this._cardCleanupFns.push(() => {
+          handle.removeEventListener('click', onHandle);
+          if (handle.parentNode) handle.parentNode.removeChild(handle);
+        });
+      }
       this.swipeEngine = new SwipeEngine(
         cardEl,
-        dir => this.handleSwipe(dir),
+        dir => { showNav(); this.handleSwipe(dir); },
         () => this._openDeepDive(card)
       );
-      const hp = this._setupHoverPreview(cardEl, card);
+      // Also hide on card touch/mousedown
+      const onCardDown = () => document.body.classList.add('swipe-active');
+      cardEl.addEventListener('mousedown', onCardDown);
+      cardEl.addEventListener('touchstart', onCardDown, { passive: true });
+      this._cardCleanupFns.push(() => {
+        cardEl.removeEventListener('mousedown', onCardDown);
+        cardEl.removeEventListener('touchstart', onCardDown);
+      });
+      // Wire the streak pill: desktop hover shows the dropdown; pill click
+      // opens the overlay directly. On touch, first tap toggles the dropdown
+      // (no hover available), and dropdown items handle the actions.
+      const wrapper = app.querySelector('.streak-pill-wrapper');
+      const pill = app.querySelector('[data-action="open-streak"]');
+      if (pill && wrapper) {
+        const dropdown = wrapper.querySelector('[data-streak-dropdown]');
+        let touchOpened = false;
+        // Touch: first tap opens dropdown, second tap opens overlay
+        const onTouch = (e) => {
+          if (dropdown && !touchOpened) {
+            e.preventDefault();
+            touchOpened = true;
+            dropdown.classList.add('open');
+          }
+        };
+        wrapper.addEventListener('touchstart', onTouch, { passive: false });
+        this._cardCleanupFns.push(() => wrapper.removeEventListener('touchstart', onTouch));
+        // Click: always open the overlay (on desktop, hover already showed dropdown)
+        const onPill = (e) => {
+          e.stopPropagation();
+          if (dropdown) dropdown.classList.remove('open');
+          this._showDailyTop5(app);
+        };
+        pill.addEventListener('click', onPill);
+        this._cardCleanupFns.push(() => pill.removeEventListener('click', onPill));
+        // Close dropdown on outside tap
+        const closeDropdown = () => {
+          if (dropdown) { dropdown.classList.remove('open'); touchOpened = false; }
+        };
+        document.addEventListener('click', closeDropdown);
+        this._cardCleanupFns.push(() => document.removeEventListener('click', closeDropdown));
+      }
+      const viewTop5 = app.querySelector('[data-action="view-top5"]');
+      if (viewTop5) {
+        const onTop5 = (e) => {
+          e.stopPropagation();
+          // Close dropdown before opening overlay
+          const dd = app.querySelector('[data-streak-dropdown]');
+          if (dd) dd.classList.remove('open');
+          this._showDailyTop5(app);
+        };
+        viewTop5.addEventListener('click', onTop5);
+        this._cardCleanupFns.push(() => viewTop5.removeEventListener('click', onTop5));
+      }
+      const restToday = app.querySelector('[data-action="rest-today"]');
+      if (restToday) {
+        const onRest = (e) => {
+          e.stopPropagation();
+          this.streak.skipToday();
+          showToast(`😴 ${this.tr.streakSkipToday}`, { type: 'info', duration: 2000 });
+          this._updateStreakPillRest();
+        };
+        restToday.addEventListener('click', onRest);
+        this._cardCleanupFns.push(() => restToday.removeEventListener('click', onRest));
+      }
+      const qp = this._setupQuickPeek(cardEl, card);
       const ag = this._setupAmbientGlow(cardEl, card);
       const tl = this._setupTiltEffect(cardEl);
       const lp = this._setupLingerPreview(cardEl, card);
-      if (hp) this._cardCleanupFns.push(hp);
-      if (ag && isGame) this._cardCleanupFns.push(ag);
+      if (qp) this._cardCleanupFns.push(qp);
+      if (ag) this._cardCleanupFns.push(ag);
       if (tl && isGame) this._cardCleanupFns.push(tl);
       if (lp) this._cardCleanupFns.push(lp);
     }
@@ -1885,6 +1590,15 @@ class App {
     // Linger preview is handled by LingerGesture in _setupLingerPreview
     // Prefetch trailer data for next cards in the stack
     this._prefetchNextCardMedia();
+    // Early pre-fetch: if the user is within 3 cards of the end of the
+    // current deck, warm the next refill batch in the background. This
+    // makes the transition to the next batch feel instant (no spinner).
+    // Fire exactly once per deck (exact match, not >=) to avoid re-triggering
+    // on every re-render near the end.
+    const remaining = this.currentCards.length - this.currentCardIndex;
+    if (remaining === 3 && !this._pendingRefill && !this._refillPrefetchInFlight) {
+      this._maybePrefetchRefill();
+    }
   }
 
   // ===== LINGER PREVIEW (hold gesture → per-media-type preview) =====
@@ -2067,343 +1781,6 @@ class App {
   }
 
 
-  // ===== EXPLICIT FEEDBACK MODAL (triggered from deep-dive "Why not?" button) =====
-  _showFeedbackModal(card) {
-    const de = this.lang === 'de';
-    const overlay = document.createElement('div');
-    overlay.className = 'feedback-overlay';
-    overlay.innerHTML = `
-      <div class="feedback-modal">
-        <h3>💬 ${de ? 'Warum interessiert dich das nicht?' : 'Why are you not interested?'}</h3>
-        <p>${escapeHTML(card.title)}</p>
-        <div class="feedback-options">
-          <button class="feedback-btn" data-reason="seen">👁️ ${this.tr.seenIt}</button>
-          <button class="feedback-btn" data-reason="mood">🎭 ${this.tr.wrongMood}</button>
-          <button class="feedback-btn" data-reason="genre">📚 ${this.tr.notMyGenre}</button>
-          <button class="feedback-btn" data-reason="other">💡 ${this.tr.otherReason}</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('open'));
-
-    overlay.querySelectorAll('.feedback-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const reason = btn.dataset.reason;
-        this._applyExplicitFeedback(card, reason);
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-      });
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-      }
-    });
-  }
-
-  _applyExplicitFeedback(card, reason) {
-    // Feed explicit reasons into the recommender profile for better future predictions
-    if (reason === 'seen' || reason === 'mood' || reason === 'genre') {
-      const signals = {
-        seen: { genrePenalty: 0.2 },
-        mood: { genrePenalty: 0.1 },
-        genre: { genrePenalty: 0.6 }
-      };
-      // Directly weaken genre weights in the recommender's profile
-      (card.genres || []).forEach(g => {
-        const genre = (typeof g === 'string' ? g : (this._genreMap[g] || g));
-        if (genre && this.recommender.profile) {
-          const cur = this.recommender.profile.genreWeights[genre] || 0;
-          this.recommender.profile.genreWeights[genre] = cur - signals[reason].genrePenalty;
-        }
-      });
-      this.recommender._saveProfile();
-      this.recommender.cache.clear();
-    }
-    // Nope the card after feedback
-    this.handleSwipe('left');
-  }
-
-  // ===== MOOD + TIME SELECTOR MODAL =====
-  _showMoodTimeModal(app) {
-    const de = this.lang === 'de';
-    const overlay = document.createElement('div');
-    overlay.className = 'mood-time-overlay';
-    
-    const moods = [
-      { id: 'cozy', icon: '☕', label: this.tr.cozy },
-      { id: 'intense', icon: '🔥', label: this.tr.intense },
-      { id: 'chill', icon: '🌊', label: this.tr.chill },
-      { id: 'competitive', icon: '🏆', label: this.tr.competitive }
-    ];
-    
-    const playtimes = [
-      { id: 'quick', icon: '⚡', label: this.tr.quickPlay, max: 30 },
-      { id: 'medium', icon: '⏱️', label: this.tr.mediumPlay, max: 120 },
-      { id: 'long', icon: '📚', label: this.tr.longPlay, max: 999 },
-      { id: 'any', icon: '♾️', label: this.tr.anyPlay, max: 9999 }
-    ];
-    
-    const currentMood = this.state.moodTimeFilter.mood;
-    const currentPlaytime = this.state.moodTimeFilter.playtime;
-    
-    overlay.innerHTML = `
-      <div class="mood-time-modal">
-        <button class="modal-close" aria-label="Close">✕</button>
-        <h3>🎯 ${this.tr.moodTimeTitle}</h3>
-        <p class="mood-time-subtitle">${this.tr.moodTimeSub}</p>
-        
-        <div class="mood-time-section">
-          <h4>${de ? 'Stimmung' : 'Mood'}</h4>
-          <div class="mood-options">
-            ${moods.map(m => `
-              <button class="mood-option ${currentMood === m.id ? 'active' : ''}" data-mood="${m.id}">
-                <span class="mood-icon">${m.icon}</span>
-                <span class="mood-label">${m.label}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-        
-        <div class="mood-time-section">
-          <h4>${de ? 'Verfuegbare Zeit' : 'Available Time'}</h4>
-          <div class="playtime-options">
-            ${playtimes.map(p => `
-              <button class="playtime-option ${currentPlaytime === p.id ? 'active' : ''}" data-playtime="${p.id}">
-                <span class="playtime-icon">${p.icon}</span>
-                <span class="playtime-label">${p.label}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-        
-        <div class="mood-time-actions">
-          <button class="btn btn-secondary mood-time-clear">${this.tr.clearFilter}</button>
-          <button class="btn btn-primary mood-time-apply">${this.tr.applyFilter}</button>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('open'));
-    
-    // Mood selection
-    overlay.querySelectorAll('.mood-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        overlay.querySelectorAll('.mood-option').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-    
-    // Playtime selection
-    overlay.querySelectorAll('.playtime-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        overlay.querySelectorAll('.playtime-option').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-    
-    // Clear button
-    overlay.querySelector('.mood-time-clear').addEventListener('click', () => {
-      this.state.moodTimeFilter = { active: false, mood: null, playtime: null };
-      this.save();
-      overlay.classList.remove('open');
-      setTimeout(() => overlay.remove(), 300);
-      this.renderCards(app);
-    });
-    
-    // Apply button
-    overlay.querySelector('.mood-time-apply').addEventListener('click', () => {
-      const selectedMood = overlay.querySelector('.mood-option.active')?.dataset.mood;
-      const selectedPlaytime = overlay.querySelector('.playtime-option.active')?.dataset.playtime;
-      
-      this.state.moodTimeFilter = {
-        active: !!(selectedMood || selectedPlaytime),
-        mood: selectedMood || null,
-        playtime: selectedPlaytime || null
-      };
-      this.save();
-      overlay.classList.remove('open');
-      setTimeout(() => overlay.remove(), 300);
-      this.renderCards(app);
-    });
-    
-    // Close on overlay click
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-      }
-    });
-    
-    // Close button
-    overlay.querySelector('.modal-close').addEventListener('click', () => {
-      overlay.classList.remove('open');
-      setTimeout(() => overlay.remove(), 300);
-    });
-  }
-
-  // ===== STEAM LIBRARY IMPORT MODAL =====
-  _showSteamLibraryModal(app) {
-    const de = this.lang === 'de';
-    const overlay = document.createElement('div');
-    overlay.className = 'steam-library-overlay';
-    
-    const { steamId, apiKey, imported, gameCount, lastFetch } = this.state.steamLibrary;
-    const hasImported = imported && gameCount > 0;
-    const lastFetchDate = lastFetch ? new Date(lastFetch * 1000).toLocaleDateString() : '';
-    
-    overlay.innerHTML = `
-      <div class="steam-library-modal">
-        <button class="modal-close" aria-label="Close">✕</button>
-        <h3>🎮 ${this.tr.steamLibrary}</h3>
-        <p class="steam-library-subtitle">${de ? 'Importiere deine Steam Spiele fuer bessere Empfehlungen' : 'Import your Steam games for better recommendations'}</p>
-        
-        ${hasImported ? `
-          <div class="steam-library-status">
-            <div class="steam-library-count">${this.t('steamLibraryCount', gameCount.toString())}</div>
-            <div class="steam-library-lastfetch">${de ? 'Letzter Import:' : 'Last import:'} ${lastFetchDate}</div>
-          </div>
-        ` : ''}
-        
-        <div class="steam-library-form">
-          <div class="steam-library-field">
-            <label for="steam-id">${this.tr.steamId}</label>
-            <input type="text" id="steam-id" value="${escapeHTML(steamId)}" placeholder="${de ? 'Deine Steam ID (z.B. 76561198012345678)' : 'Your Steam ID (e.g. 76561198012345678)'}">
-            <a href="https://steamid.io/" target="_blank" rel="noopener" class="steam-library-help">${de ? 'Steam ID finden' : 'Find your Steam ID'}</a>
-          </div>
-          
-          <div class="steam-library-field">
-            <label for="steam-api-key">${this.tr.steamApiKey}</label>
-            <input type="password" id="steam-api-key" value="${escapeHTML(apiKey)}" placeholder="${de ? 'Steam Web API Key (optional)' : 'Steam Web API Key (optional)'}">
-            <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener" class="steam-library-help">${de ? 'API Key bekommen' : 'Get API Key'}</a>
-          </div>
-        </div>
-        
-        <div class="steam-library-actions">
-          ${hasImported ? `
-            <button class="btn btn-secondary steam-library-clear">${this.tr.clearFilter}</button>
-          ` : ''}
-          <button class="btn btn-primary steam-library-import" ${!steamId ? 'disabled' : ''}>
-            ${this.tr.steamImport}
-          </button>
-        </div>
-        
-        <div class="steam-library-info">
-          <p>${de ? 'Hinweis: Dein Profil muss oeffentlich sein, oder du brauchst einen API Key.' : 'Note: Your profile must be public, or you need an API key.'}</p>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('open'));
-    
-    // Enable/disable import button based on Steam ID input
-    const steamIdInput = overlay.querySelector('#steam-id');
-    const importBtn = overlay.querySelector('.steam-library-import');
-    steamIdInput.addEventListener('input', () => {
-      importBtn.disabled = !steamIdInput.value.trim();
-    });
-    
-    // Import button
-    importBtn.addEventListener('click', async () => {
-      const id = steamIdInput.value.trim();
-      const key = overlay.querySelector('#steam-api-key').value.trim();
-      
-      if (!id) return;
-      
-      importBtn.disabled = true;
-      importBtn.textContent = this.tr.steamImporting;
-      
-      try {
-        await this._fetchSteamLibrary(id, key, overlay);
-      } catch (error) {
-        console.error('Steam Library import error:', error);
-        showToast(this.tr.steamImportError, { type: 'error', duration: 3000 });
-      } finally {
-        importBtn.disabled = false;
-        importBtn.textContent = this.tr.steamImport;
-      }
-    });
-    
-    // Clear button
-    overlay.querySelector('.steam-library-clear')?.addEventListener('click', () => {
-      this.state.steamLibrary = { steamId: '', apiKey: '', imported: false, gameCount: 0, lastFetch: 0 };
-      this.save();
-      overlay.classList.remove('open');
-      setTimeout(() => overlay.remove(), 300);
-      this.renderCards(app);
-    });
-    
-    // Close on overlay click
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.classList.remove('open');
-        setTimeout(() => overlay.remove(), 300);
-      }
-    });
-    
-    // Close button
-    overlay.querySelector('.modal-close').addEventListener('click', () => {
-      overlay.classList.remove('open');
-      setTimeout(() => overlay.remove(), 300);
-    });
-  }
-
-  async _fetchSteamLibrary(steamId, apiKey, overlay) {
-    const params = new URLSearchParams({ steamid: steamId });
-    if (apiKey) params.set('api_key', apiKey);
-    
-    const response = await fetch(`/proxy/steam/library?${params.toString()}`);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to fetch Steam library');
-    }
-    
-    const data = await response.json();
-    const { gameCount, games } = data;
-    
-    // Store library in state
-    this.state.steamLibrary = {
-      steamId,
-      apiKey,
-      imported: true,
-      gameCount,
-      lastFetch: Math.floor(Date.now() / 1000),
-      games: games || []
-    };
-    this.save();
-    
-    // Store in IndexedDB for persistence
-    await safeSetJSON('bs-steam-library', this.state.steamLibrary);
-    
-    showToast(this.t('steamLibraryCount', gameCount.toString()), { type: 'success', duration: 3000 });
-    
-    overlay.classList.remove('open');
-    setTimeout(() => overlay.remove(), 300);
-    this.renderCards(document.getElementById('app'));
-  }
-
-  _isInLibrary(card) {
-    if (!this.state.steamLibrary.imported || !this.state.steamLibrary.games) {
-      return false;
-    }
-    
-    // Check by Steam App ID if available
-    if (card.steamAppId) {
-      return this.state.steamLibrary.games.some(g => g.appId === card.steamAppId);
-    }
-    
-    // Fallback: check by title (case-insensitive)
-    const cardTitle = (card.title || '').toLowerCase();
-    return this.state.steamLibrary.games.some(g => 
-      (g.name || '').toLowerCase() === cardTitle
-    );
-  }
-
-  // ===== MOOD + TIME FILTER LOGIC =====
   _applyMoodTimeFilter(items) {
     const { mood, playtime } = this.state.moodTimeFilter;
     if (!mood && !playtime) return items;
@@ -2638,6 +2015,8 @@ class App {
 
     // Track swipe in experiment
     this.experiment.trackSwipe({ direction: dir, item: card });
+    // Update streak counter (any swipe counts toward the daily goal)
+    if (this.streak) this.streak.recordSwipe();
 
     // Re-score remaining cards with updated preferences
     if (this.recommender && (dir === 'right' || dir === 'left')) {
@@ -2652,312 +2031,240 @@ class App {
     await this.save();
     const app = document.getElementById('app');
     if (this.currentCardIndex >= this.currentCards.length) {
-      this.currentCardIndex = 0;
-      this.renderDiscover(app);
+      // Endless feed: never show empty state. Pre-fetched items win,
+      // otherwise refill from local sources, otherwise fetch from a
+      // rotated genre and re-render when it lands.
+      this._refillOrFetch(app, () => this.renderCards(app));
     } else {
       this.renderCards(app);
     }
   }
 
-  // ===== REMAINING HELPER METHODS =====
-  _getCardDNATags(card) {
-    const tags = [];
-    const overview = (card.overview || '').toLowerCase();
-    if (/twist|surprise|reveal|mystery/.test(overview)) tags.push('🧠 Plot Twist');
-    if (/romance|love|relationship/.test(overview)) tags.push('💕 Slow Burn');
-    if (/dark|noir|shadow|neon/.test(overview)) tags.push('🎬 Neon Noir');
-    if (/space|galaxy|star|planet/.test(overview)) tags.push('🚀 Space Opera');
-    if (/laugh|funny|comedy|hilarious/.test(overview)) tags.push('😂 Feel Good');
-    if (/horror|scary|terrifying|nightmare/.test(overview)) tags.push('👻 Horror');
-    if (/action|fight|battle|chase/.test(overview)) tags.push('💥 Action Packed');
-    if (/true story|based on|real events/.test(overview)) tags.push('📖 Based on True Story');
-    if (card.type === 'game' || card.source === 'igdb') {
-      if (card.themes) card.themes.forEach(t => {
-        if (/fantasy/i.test(t)) tags.push('⚔️ Fantasy');
-        if (/sci.fi/i.test(t)) tags.push('🚀 Sci-Fi');
-        if (/horror/i.test(t)) tags.push('👻 Horror');
-        if (/histor/i.test(t)) tags.push('📜 Historical');
-      });
-      if (card.modes) card.modes.forEach(m => {
-        if (/multi/i.test(m)) tags.push('👥 Multiplayer');
-        if (/single/i.test(m)) tags.push('👤 Single-Player');
-      });
-      if (card.perspectives) card.perspectives.forEach(p => {
-        if (/first/i.test(p)) tags.push('🔫 FPS');
-        if (/third/i.test(p)) tags.push('🎯 Third-Person');
-      });
-    }
-    if (!tags.length && card.genres) {
-      const g = card.genres;
-      if (Array.isArray(g)) {
-        if (g.includes(878)) tags.push('🌌 Sci-Fi');
-        if (g.includes(27)) tags.push('👻 Horror');
-        if (g.includes(10749)) tags.push('💕 Romance');
-        if (g.includes(16)) tags.push('✨ Animated');
-        if (g.includes(12)) tags.push('🎭 RPG');
-        if (g.includes(2)) tags.push('💥 Action');
+  // ===== ENDLESS FEED: refill deck and kick off background pre-fetch =====
+  // Strategy (always wins, never shows "seen it all"):
+  //   1. Pre-fetched items (warmed in the background) are used first.
+  //   2. Local sources (watchlist / history / cross-media) are a synchronous
+  //      fallback so the user never sees a blank screen.
+  //   3. If the local fallback is too small, fetch from a different genre
+  //      ("genre rotation") and re-render when it lands.
+  //   4. As the user is swiping the last few cards, _maybePrefetchRefill()
+  //      warms the next batch in the background so step (1) almost always wins.
+  _refillOrFetch(app, onReady) {
+    // Step 1: use pre-fetched items if available and big enough.
+    // Discard the batch if the user switched media type or filters
+    // since the prefetch started — those items belong to a different
+    // discovery context and would confuse the recommender.
+    const pre = this._pendingRefill;
+    if (pre && pre.items && pre.items.length >= 3) {
+      if (this._isPendingRefillValid(pre)) {
+        this.currentCards = pre.items;
+        this.currentCardIndex = 0;
+        this._pendingRefill = null;
+        this._announceRefill();
+        onReady();
+        this._maybePrefetchRefill();
+        return;
       }
+      // Stale (mediaType or filters changed) — discard, don't waste the
+      // in-flight pre-fetch's work
+      this._pendingRefill = null;
     }
-    return tags.slice(0, 3);
-  }
-
-  _renderPlatformBadges(card) {
-    if (!card.platforms || !card.platforms.length) return '';
-    const shown = card.platforms.slice(0, 3);
-    return `<div class="platform-badges">${shown.map(p =>
-      `<span class="platform-badge">${escapeHTML(p.abbr || p.name)}</span>`
-    ).join('')}${card.platforms.length > 3 ? `<span class="platform-badge more">+${card.platforms.length - 3}</span>` : ''}</div>`;
-  }
-
-  _renderPlaytimeBadge(card) {
-    if (!card.playtime && card.playtime !== 0) return '';
-    let range;
-    if (card.playtime <= 5) range = PLAYTIME_RANGES.quick;
-    else if (card.playtime <= 20) range = PLAYTIME_RANGES.medium;
-    else if (card.playtime <= 50) range = PLAYTIME_RANGES.long;
-    else range = PLAYTIME_RANGES.epic;
-    return `<span class="playtime-badge" style="--pt-color:${range.color}">${range.icon} ${card.playtime}h</span>`;
-  }
-
-  _renderMultiplayerBadge(card) {
-    if (!card.modes || !card.modes.length) return '';
-    let mt = MULTIPLAYER_TYPES.single;
-    const modes = card.modes.map(m => m.toLowerCase());
-    if (modes.some(m => /mmo|massive/.test(m))) mt = MULTIPLAYER_TYPES.mmo;
-    else if (modes.some(m => /pvp|competitive|versus/.test(m))) mt = MULTIPLAYER_TYPES.pvp;
-    else if (modes.some(m => /co.op|cooperative|multi/.test(m))) mt = MULTIPLAYER_TYPES.coop;
-    return `<span class="multiplayer-badge" style="--mp-color:${mt.color}">${mt.icon} ${mt.label}</span>`;
-  }
-
-  _renderSteamTags(card) {
-    const tags = card.steamTags || [];
-    if (!tags.length) return '';
-    return `<div class="steam-tags">${tags.slice(0, 4).map(t =>
-      `<span class="steam-tag">${escapeHTML(typeof t === 'string' ? t : t.name)}</span>`
-    ).join('')}</div>`;
-  }
-
-  _renderPriceBadge(card) {
-    if (card.price === undefined || card.price === null) return '';
-    if (card.isFree) return '<span class="price-badge free">Free</span>';
-    if (card.discount > 0) {
-      return `<span class="price-badge discount">-${card.discount}%</span><span class="price-badge">${escapeHTML(card.price)}</span>`;
+    // Step 2: synchronous local refill (watchlist + history + cross-media)
+    const local = this._refillDeck();
+    if (local.length >= 3) {
+      this.currentCards = local;
+      this.currentCardIndex = 0;
+      this._announceRefill();
+      onReady();
+      this._maybePrefetchRefill();
+      return;
     }
-    if (card.price) return `<span class="price-badge">${escapeHTML(card.price)}</span>`;
-    return '';
-  }
-
-  _renderReviewBadge(card) {
-    if (card.reviewScore === null || card.reviewScore === undefined) return '';
-    const score = card.reviewScore;
-    const count = card.reviewCount || 0;
-    if (count < 10) return '';
-    let colorClass = 'mixed';
-    if (score >= 95 && count >= 500) colorClass = 'overwhelming';
-    else if (score >= 80) colorClass = 'positive';
-    else if (score >= 70) colorClass = 'mostly-positive';
-    else if (score >= 40) colorClass = 'mixed';
-    else colorClass = 'negative';
-    const desc = this.lang === 'de' ? (card.reviewDescDe || card.reviewDesc || '') : (card.reviewDesc || '');
-    return `<span class="review-badge ${colorClass}" title="${escapeHTML(desc)} - ${count.toLocaleString()} reviews">
-      <span class="review-score">${score}%</span>
-      <span class="review-label">${escapeHTML(desc)}</span>
-    </span>`;
-  }
-
-  _renderMetacriticBadge(card) {
-    if (!card.metacritic) return '';
-    let colorClass = 'mc-mixed';
-    if (card.metacritic >= 75) colorClass = 'mc-good';
-    else if (card.metacritic >= 50) colorClass = 'mc-mixed';
-    else colorClass = 'mc-bad';
-    return `<span class="metacritic-badge ${colorClass}">MC ${card.metacritic}</span>`;
-  }
-
-  _getBlindGameHook(card) {
-    const overview = (card.overview || '').toLowerCase();
-    const genres = (card.genres || []).join(' ').toLowerCase();
-    const themes = (card.themes || []).join(' ').toLowerCase();
-    if (/souls.like|dark.souls|elden/.test(genres + overview)) return 'A punishing action RPG where death teaches, not punishes.';
-    if (/roguelike|roguelite/.test(genres)) return 'A different run every time — die, learn, adapt, repeat.';
-    if (/open.world|exploration/.test(genres + overview)) return 'A vast world awaits — go anywhere, do anything, at your own pace.';
-    if (/horror|survival.horror/.test(genres)) return 'Terror lurks around every corner. Stay alert. Stay alive.';
-    if (/simulation|farming|building/.test(genres)) return 'Build, grow, and create your own peaceful world.';
-    if (/puzzle|raetsel/.test(genres)) return 'Think outside the box — every solution is a surprise.';
-    if (/strategy|tactical/.test(genres)) return 'Outsmart, outplay, and conquer through pure brainpower.';
-    if (/rpg|role.playing/.test(genres)) return 'Forge your character, shape your story, become a legend.';
-    if (/platformer|metroidvania/.test(genres)) return 'Precision jumping meets rewarding exploration.';
-    if (/racing|rennspiel/.test(genres)) return 'Feel the speed, own the track, leave everyone behind.';
-    if (/fighting|kampf/.test(genres)) return 'Master combos, read your opponent, land the perfect strike.';
-    if (/adventure|abenteuer/.test(genres)) return 'Explore wild lands, solve old secrets, survive the unknown.';
-    return card.overview ? card.overview.split('.')[0] + '.' : 'A game worth your time.';
-  }
-
-  _getBlindGameMechanics(card) {
-    const mechanics = [];
-    const genres = (card.genres || []).join(' ').toLowerCase();
-    const modes = (card.modes || []).join(' ').toLowerCase();
-    const perspectives = (card.perspectives || []).join(' ').toLowerCase();
-    if (/rpg|role.playing/.test(genres)) mechanics.push('🎭 RPG');
-    if (/action/.test(genres)) mechanics.push('💥 Action');
-    if (/adventure/.test(genres)) mechanics.push('🗺️ Adventure');
-    if (/horror/.test(genres)) mechanics.push('👻 Horror');
-    if (/puzzle/.test(genres)) mechanics.push('🧩 Puzzle');
-    if (/strategy|tactical/.test(genres)) mechanics.push('🧠 Strategy');
-    if (/simulation/.test(genres)) mechanics.push('🎮 Simulation');
-    if (/platformer/.test(genres)) mechanics.push('⬆️ Platformer');
-    if (/roguelike|roguelite/.test(genres)) mechanics.push('🔄 Roguelike');
-    if (/racing/.test(genres)) mechanics.push('🏎️ Racing');
-    if (/sports/.test(genres)) mechanics.push('⚽ Sports');
-    if (/fighting/.test(genres)) mechanics.push('🥊 Fighting');
-    if (/indie/.test(genres)) mechanics.push('🎨 Indie');
-    if (/casual/.test(genres)) mechanics.push('☕ Casual');
-    if (/multi|co.op/.test(modes)) mechanics.push('👥 Multiplayer');
-    if (/single/.test(modes)) mechanics.push('👤 Solo');
-    if (/first.person/.test(perspectives)) mechanics.push('🔫 First-Person');
-    if (/third.person/.test(perspectives)) mechanics.push('🎯 Third-Person');
-    if (!mechanics.length) mechanics.push('🎮 Game');
-    return mechanics.slice(0, 3).map(m => `<span class="blind-mechanic-tag">${m}</span>`).join('');
-  }
-
-  _setupHoverPreview(cardEl, card) {
-    const isGame = card.type === 'game' || card.source === 'igdb';
-    const isTMDB = card.source === 'tmdb' && (card.type === 'movie' || card.type === 'tv');
-    if (!isGame && !isTMDB) return null;
-
-    let videoId = null;
-    if (isGame) {
-      const trailers = card.trailers || [];
-      if (!trailers.length) return null;
-      videoId = trailers[0].id;
-    }
-    if (!videoId && !isTMDB) return null;
-
-    const cover = cardEl.querySelector('.card-cover');
-    if (!cover) return null;
-    let iframe = null;
-    let hoverTimer = null;
-    let isPlaying = false;
-    let trailerFetched = false;
-
-    const createIframe = (id) => {
-      const el = document.createElement('iframe');
-      el.className = 'card-trailer-iframe';
-      el.src = `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&controls=0&modestbranding=1&rel=0&showinfo=0`;
-      el.allow = 'autoplay; encrypted-media';
-      el.setAttribute('frameborder', '0');
-      el.setAttribute('pointer-events', 'none');
-      return el;
-    };
-
-    const startPreview = () => {
-      hoverTimer = setTimeout(async () => {
-        if (isPlaying) return;
-        if (isTMDB && !videoId && !trailerFetched) {
-          trailerFetched = true;
-          try {
-            const videos = await getTMDBVideos(card.tmdb_id, card.type === 'tv' ? 'tv' : 'movie', this.lang);
-            if (videos.length) videoId = videos[0].id;
-          } catch { return; }
-        }
-        if (!videoId) return;
-        isPlaying = true;
-        iframe = document.createElement('iframe');
-        iframe.className = 'game-preview-iframe';
-        iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&showinfo=0`;
-        iframe.allow = 'autoplay; encrypted-media';
-        iframe.setAttribute('frameborder', '0');
-        cover.style.transition = 'opacity 0.4s ease';
-        cover.style.opacity = '0';
-        cardEl.insertBefore(iframe, cover.nextSibling);
-        setTimeout(() => { iframe.style.opacity = '1'; }, 50);
-      }, 1500);
-    };
-    const stopPreview = () => {
-      clearTimeout(hoverTimer);
-      if (iframe && isPlaying) {
-        iframe.style.opacity = '0';
-        cover.style.opacity = '1';
-        const ref = iframe;
-        setTimeout(() => ref.remove(), 400);
-        iframe = null;
-        isPlaying = false;
+    // Step 3: too few local items — async fetch from a rotated genre
+    this._fetchGenreRotation().then(items => {
+      if (items && items.length >= 3) {
+        this.currentCards = items;
+        this.currentCardIndex = 0;
+        this._announceRefill();
+        onReady();
+        this._maybePrefetchRefill();
+      } else {
+        // Last resort: keep the small local set so the user has *something*
+        this.currentCards = local;
+        this.currentCardIndex = 0;
+        if (local.length) this._announceRefill();
+        onReady();
       }
-    };
-    const cleanup = () => {
-      clearTimeout(hoverTimer);
-      if (iframe) { iframe.remove(); iframe = null; }
-      isPlaying = false;
-    };
-    cardEl.addEventListener('mouseenter', startPreview);
-    cardEl.addEventListener('mouseleave', stopPreview);
-    return cleanup;
+    }).catch(() => {
+      this.currentCards = local;
+      this.currentCardIndex = 0;
+      if (local.length) this._announceRefill();
+      onReady();
+    });
   }
 
-  _setupAmbientGlow(cardEl, card) {
-    if (!card.cover) return null;
-    let loaded = false;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = card.cover;
-    img.onload = () => {
-      if (!loaded || !cardEl.isConnected) return;
+  _announceRefill() {
+    // Debounce: avoid stacking toasts when the user rapidly burns through
+    // multiple refills back-to-back. One toast every 2s is plenty.
+    const now = Date.now();
+    if (this._lastRefillAnnounceAt && now - this._lastRefillAnnounceAt < 2000) return;
+    this._lastRefillAnnounceAt = now;
+    const de = this.lang === 'de';
+    showToast(de ? '🔄 Mische neu zusammen...' : '🔄 Mixing it up...', {
+      type: 'info', duration: 1500,
+    });
+  }
+
+  // Trigger a background fetch for the next refill batch. Safe to call
+  // repeatedly; debounced by `_refillPrefetchInFlight` so we don't stampede
+  // the API while the user is rapidly swiping.
+  _maybePrefetchRefill() {
+    if (this._refillPrefetchInFlight) return;
+    this._refillPrefetchInFlight = true;
+    const mediaTypeAtFetch = this.state.mediaType;
+    const filtersHashAtFetch = this._filtersHash();
+    this._fetchGenreRotation()
+      .then(items => {
+        this._pendingRefill = {
+          items: items || [],
+          mediaType: mediaTypeAtFetch,
+          filtersHash: filtersHashAtFetch,
+        };
+      })
+      .catch(() => { this._pendingRefill = null; })
+      .finally(() => {
+        // Stagger the next attempt so the prefetch stays fresh
+        setTimeout(() => { this._refillPrefetchInFlight = false; }, 1500);
+      });
+  }
+
+  // Quick hash of the current filter state so we can detect when a
+  // pre-fetched batch was built against different filters than the
+  // current session.
+  _filtersHash() {
+    const s = this.state;
+    return [
+      s.mediaType,
+      (s.selectedGenres || []).join(','),
+      (s.selectedMoods || []).join(','),
+      s.releaseRadarMode ? 1 : 0,
+    ].join('|');
+  }
+
+  // A pre-fetched batch is "valid" if the media type and filter hash
+  // match the current session. Stale batches are discarded and a fresh
+  // fetch is kicked off.
+  _isPendingRefillValid(pre) {
+    if (pre.mediaType !== this.state.mediaType) return false;
+    if (pre.filtersHash !== this._filtersHash()) return false;
+    return true;
+  }
+
+  // Fetch a batch of items from a genre the user isn't currently filtering on.
+  // This is the "genre rotation" fallback: keeps the deck moving even when
+  // the local sources (watchlist/history) are empty.
+  async _fetchGenreRotation() {
+    try {
+      const currentGenres = (this.state.selectedGenres || []).map(g => String(g));
+      let poolGenres = [];
+      if (this.state.mediaType === 'books') {
+        const { BOOK_GENRES } = await import('./books.js');
+        poolGenres = (BOOK_GENRES[this.lang] || BOOK_GENRES.en).map(g => g.id);
+      } else if (this.state.mediaType === 'games') {
+        const { GAME_GENRES } = await import('./games.js');
+        poolGenres = (GAME_GENRES[this.lang] || GAME_GENRES.en).map(g => g.id);
+      } else {
+        const mediaGenres = (MEDIA_GENRES[this.lang] || MEDIA_GENRES.en)[this.state.mediaType] || [];
+        poolGenres = mediaGenres.map(g => g.id);
+      }
+      // Pick a genre that isn't currently selected (rotation = novelty)
+      const candidates = poolGenres.filter(g => !currentGenres.includes(String(g)));
+      const pickFrom = candidates.length ? candidates : poolGenres;
+      const rotatedGenre = pickFrom[Math.floor(Math.random() * pickFrom.length)];
+      if (!rotatedGenre) return [];
+
+      // Fetch using the same APIs as the main flow, with rotated genre only
+      const savedGenres = this.state.selectedGenres;
+      this.state.selectedGenres = [rotatedGenre];
+      let items = [];
       try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 40;
-        canvas.height = 40;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, 40, 40);
-        const data = ctx.getImageData(10, 10, 20, 20).data;
-        let r = 0, g = 0, b = 0, count = 0;
-        for (let i = 0; i < data.length; i += 16) {
-          r += data[i]; g += data[i+1]; b += data[i+2]; count++;
+        if (this.state.mediaType === 'books') {
+          const { fetchBooks } = await import('./api.js');
+          items = await fetchBooks([rotatedGenre], this.state.selectedMoods, this.lang);
+        } else if (this.state.mediaType === 'games') {
+          const { fetchGamesForDiscovery, enrichGamesWithSteam } = await import('./games_api.js');
+          const raw = await fetchGamesForDiscovery([rotatedGenre], this.state.selectedPlatforms || [], 30);
+          items = await enrichGamesWithSteam(raw);
+        } else {
+          items = await this.fetchMedia();
         }
-        r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
-        cardEl.style.setProperty('--ambient-r', r);
-        cardEl.style.setProperty('--ambient-g', g);
-        cardEl.style.setProperty('--ambient-b', b);
-        cardEl.classList.add('has-ambient');
-      } catch(e) {}
-    };
-    loaded = true;
-    return () => { loaded = false; img.onload = null; };
+      } finally {
+        this.state.selectedGenres = savedGenres; // always restore
+      }
+
+      const watchIds = new Set(this.watchlist.map(w => w.id));
+      const dislikedIds = new Set(this.disliked.map(d => d.id));
+      const currentIds = new Set(this.currentCards.map(c => c.id));
+      const consumedIds = new Set((this.consumed || []).map(c => c.id));  // LIB-011: dedup consumed
+      const filtered = (items || []).filter(i =>
+        i && i.id && !watchIds.has(i.id) && !dislikedIds.has(i.id) && !currentIds.has(i.id) && !consumedIds.has(i.id)
+      );
+      // Tag with _refill so renderCards can show a subtle badge
+      filtered.forEach(it => { it._refill = true; it._refillSource = 'genre-rotation'; });
+      return filtered.slice(0, 12);
+    } catch (e) {
+      if (e && e.name !== 'AbortError') console.warn('genre rotation failed', e);
+      return [];
+    }
   }
 
-  _setupTiltEffect(cardEl) {
-    let raf = null;
-    const handleMove = (e) => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const rect = cardEl.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width - 0.5;
-        const y = (e.clientY - rect.top) / rect.height - 0.5;
-        const tiltX = y * -12;
-        const tiltY = x * 12;
-        const glareX = (x + 0.5) * 100;
-        const glareY = (y + 0.5) * 100;
-        cardEl.style.transform = `perspective(800px) rotateX(${tiltX}deg) rotateY(${tiltY}deg) scale(1.02)`;
-        cardEl.style.setProperty('--glare-x', `${glareX}%`);
-        cardEl.style.setProperty('--glare-y', `${glareY}%`);
+  // ===== ENDLESS FEED: auto-refill the deck =====
+  // Never show "seen it all" — always re-surface items from watchlist,
+  // history, or different genres. Items are marked `_refill: true` so the
+  // recommender treats them as exploration, not strong matches.
+  _refillDeck() {
+    const seen = new Set([
+      ...this.watchlist.map(w => w.id),
+      ...this.disliked.map(d => d.id),
+      ...(this.consumed || []).map(c => c.id),  // LIB-011: dedup consumed
+      ...this.currentCards.map(c => c.id),
+      ]);
+    const allMediaTypes = ['books', 'movies', 'tv', 'games'];
+    const otherTypes = allMediaTypes.filter(t => t !== this.state.mediaType);
+
+    // Source 1: Resurface watchlist items the user has saved (re-watch candidates)
+    const fromWatchlist = this.watchlist
+      .filter(w => !seen.has(w.id) || Math.random() < 0.3) // 30% chance to re-show already-seen
+      .map(w => ({ ...w, _refill: true, _refillSource: 'watchlist' }));
+
+    // Source 2: Resurface history items that weren't strong like/nope
+    const fromHistory = (this.history || [])
+      .filter(h => h && h.id && !seen.has(h.id))
+      .slice(-20) // last 20 history entries
+      .map(h => ({ ...h, _refill: true, _refillSource: 'history' }));
+
+    // Source 3: Cross-media wildcards (different media type) for variety
+    const crossMedia = this.watchlist
+      .filter(w => otherTypes.some(t => w.type === t || w.source === (t === 'games' ? 'igdb' : 'tmdb')))
+      .slice(0, 4)
+      .map(w => ({ ...w, _refill: true, _refillSource: 'cross-media' }));
+
+    const combined = [...fromWatchlist, ...fromHistory, ...crossMedia];
+    // Shuffle so the user doesn't see a predictable pattern
+    for (let i = combined.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [combined[i], combined[j]] = [combined[j], combined[i]];
+    }
+    const refill = combined.slice(0, 12);
+
+    if (refill.length) {
+      const de = this.lang === 'de';
+      showToast(de ? '🔄 Mische neu zusammen...' : '🔄 Mixing it up...', {
+        type: 'info', duration: 1800,
       });
-    };
-    const handleLeave = () => {
-      if (raf) cancelAnimationFrame(raf);
-      cardEl.style.transform = '';
-      cardEl.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)';
-      setTimeout(() => { cardEl.style.transition = ''; }, 500);
-    };
-    const cleanup = () => {
-      if (raf) cancelAnimationFrame(raf);
-      cardEl.removeEventListener('mousemove', handleMove);
-      cardEl.removeEventListener('mouseleave', handleLeave);
-    };
-    cardEl.addEventListener('mousemove', handleMove);
-    cardEl.addEventListener('mouseleave', handleLeave);
-    return cleanup;
+    }
+    return refill;
   }
 
-  // ===== CARD MODAL WITH IMPROVED REASONING =====
   _showCardModal(card, app) {
     const isGame = card.type === 'game' || card.source === 'igdb';
     const isBook = this.state.mediaType === 'books';
@@ -3228,7 +2535,7 @@ class App {
   }
 
   async _doSearch(query, container, app, closeFn) {
-    container.innerHTML = `<div class="search-loading">${this.tr.loading}</div>`;
+    container.innerHTML = `<div class="search-loading"><div class="search-loading-dots" aria-hidden="true"><span></span><span></span><span></span></div>${this.tr.loading}</div>`;
     const type = this.state.mediaType;
     let items = [];
 
@@ -3391,12 +2698,290 @@ class App {
       </div>`;
   }
 
+  // ===== RETENTION LOOPS: Daily Top 5 + Streak =====
+
+  /**
+   * Open the Daily Top 5 overlay. Builds the list on first view each day
+   * (cached for the rest of the day) and renders a shareable URL.
+   */
+  async _showDailyTop5(app) {
+    const existing = document.querySelector('.daily-top5-overlay');
+    if (existing) existing.remove();
+    // Clear any leftover countdown interval from a previous open
+    if (this._dailyTop5CountdownTimer) {
+      clearInterval(this._dailyTop5CountdownTimer);
+      this._dailyTop5CountdownTimer = null;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'daily-top5-overlay';
+    overlay.innerHTML = `
+      <div class="daily-top5-modal">
+        <button class="modal-close" aria-label="Close">✕</button>
+        <div class="daily-top5-header">
+          <div class="daily-top5-icon">⭐</div>
+          <h2 class="daily-top5-title">${this.tr.dailyTop5}</h2>
+          <p class="daily-top5-sub">${this.tr.dailyTop5Sub}</p>
+        </div>
+        <div class="daily-top5-list" data-d5-list>
+          <div class="daily-top5-loading">${this.tr.loading}</div>
+        </div>
+        <div class="daily-top5-actions">
+          <button class="btn btn-secondary btn-d5-refresh" data-d5-action="refresh">🔄 ${this.tr.dailyTop5Refresh}</button>
+          <button class="btn btn-primary btn-d5-share" data-d5-action="share">📤 ${this.tr.dailyTop5Share}</button>
+        </div>
+        <div class="daily-top5-countdown" data-d5-countdown></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    overlay.querySelector('.modal-close')?.addEventListener('click', () => {
+      if (this._dailyTop5CountdownTimer) {
+        clearInterval(this._dailyTop5CountdownTimer);
+        this._dailyTop5CountdownTimer = null;
+      }
+      overlay.classList.remove('open');
+      setTimeout(() => overlay.remove(), 300);
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        if (this._dailyTop5CountdownTimer) {
+          clearInterval(this._dailyTop5CountdownTimer);
+          this._dailyTop5CountdownTimer = null;
+        }
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 300);
+      }
+    });
+    overlay.querySelector('[data-d5-action="refresh"]')?.addEventListener('click', async () => {
+      const list = overlay.querySelector('[data-d5-list]');
+      list.innerHTML = `<div class="daily-top5-loading">${this.tr.loading}</div>`;
+      const result = await this.dailyTop5.refreshToday();
+      this._renderDailyTop5List(list, result.items);
+      this._renderDailyTop5Countdown(overlay);
+      showToast(this.tr.dailyTop5Refreshed, { type: 'success', duration: 1500 });
+    });
+    overlay.querySelector('[data-d5-action="share"]')?.addEventListener('click', () => {
+      const items = this._lastDailyTop5Items || [];
+      const url = this.dailyTop5.buildShareUrl(items);
+      if (!url) return;
+      const shareData = {
+        title: this.lang === 'de' ? 'Meine BookSwipe Top 5' : 'My BookSwipe Top 5',
+        text: `${this.tr.dailyTop5SharedPrefix}: ${items.map(i => i.title).join(', ')}`,
+        url,
+      };
+      if (navigator.share) {
+        navigator.share(shareData).catch(() => this._copyToClipboard(url));
+      } else {
+        this._copyToClipboard(url);
+      }
+    });
+
+    this._renderDailyTop5Countdown(overlay);
+    const result = await this.dailyTop5.getToday();
+    const list = overlay.querySelector('[data-d5-list]');
+    if (!result.items.length) {
+      list.innerHTML = `<div class="daily-top5-empty">${this.tr.dailyTop5Empty}</div>`;
+    } else {
+      this._renderDailyTop5List(list, result.items);
+    }
+  }
+
+  _renderDailyTop5List(container, items) {
+    this._lastDailyTop5Items = items;
+    if (!items.length) {
+      container.innerHTML = `<div class="daily-top5-empty">${this.tr.dailyTop5Empty}</div>`;
+      return;
+    }
+    container.innerHTML = items.map(item => {
+      const isGame = item.type === 'game' || item.source === 'igdb';
+      const emoji = isGame ? '🎮' : (item.source === 'openlibrary' || item.source === 'gbooks') ? '📚' : '🎬';
+      return `
+        <div class="daily-top5-item" data-id="${escapeHTML(item.id)}">
+          <div class="daily-top5-rank">${item._rank}</div>
+          <div class="daily-top5-cover"><img class="daily-top5-img" loading="lazy" src="${escapeHTML(item.cover || '')}" alt="${escapeHTML(item.title)}" onerror="this.classList.add('hidden');this.parentNode.textContent='${emoji}'"></div>
+          <div class="daily-top5-info">
+            <strong class="daily-top5-item-title">${escapeHTML(item.title)}</strong>
+            <span class="daily-top5-reason">${escapeHTML(item._reason || '')}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  _renderDailyTop5Countdown(overlay) {
+    const node = overlay.querySelector('[data-d5-countdown]');
+    if (!node) return;
+    const tick = () => {
+      const ms = this.dailyTop5.msUntilMidnight();
+      const h = Math.floor(ms / (60 * 60 * 1000));
+      const m = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000));
+      node.textContent = this.lang === 'de'
+        ? `⏰ Neue Top 5 in ${h}h ${m}m`
+        : `⏰ New Top 5 in ${h}h ${m}m`;
+    };
+    tick();
+    if (this._dailyTop5CountdownTimer) clearInterval(this._dailyTop5CountdownTimer);
+    this._dailyTop5CountdownTimer = setInterval(tick, 60 * 1000);
+  }
+
+  _onDailyTop5Refreshed() {
+    const list = document.querySelector('.daily-top5-overlay [data-d5-list]');
+    if (list) {
+      this.dailyTop5.getToday().then(r => {
+        if (r.items && r.items.length) this._renderDailyTop5List(list, r.items);
+      });
+    }
+  }
+
+  _copyToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast(this.tr.dailyTop5Copied, { type: 'success', duration: 1500 });
+      }).catch(() => prompt(this.lang === 'de' ? 'Link kopieren:' : 'Copy this link:', text));
+    } else {
+      prompt(this.lang === 'de' ? 'Link kopieren:' : 'Copy this link:', text);
+    }
+  }
+
+  // ===== STREAK: milestone confetti + goal toast =====
+
+  /**
+   * Fire the confetti animation when a streak milestone is reached.
+   * Each milestone has a distinct palette and intensity (see STREAK_CONFETTI).
+   * Variable reward: 3=teal, 7=orange, 14=violet/pink, 30=rainbow,
+   * 100=big rainbow, 365=gold.
+   */
+  _fireStreakMilestone(milestone, payload) {
+    const confetti = (payload && payload.confetti) || STREAK_CONFETTI[milestone] || STREAK_CONFETTI[3];
+    showToast(`🔥 ${this.tr.milestonePrefix} ${milestone} ${this.tr.milestoneSuffix}!`, {
+      type: 'success', duration: 4000,
+    });
+    this._spawnStreakConfetti(confetti, milestone);
+  }
+
+  _spawnStreakConfetti(spec, milestone) {
+    const container = document.createElement('div');
+    container.className = 'streak-confetti-container';
+    container.dataset.milestone = String(milestone);
+    document.body.appendChild(container);
+    const cx = window.innerWidth / 2;
+    const cy = Math.max(window.innerHeight * 0.3, 200);
+    const colors = spec.colors;
+    for (let i = 0; i < spec.count; i++) {
+      const p = document.createElement('div');
+      p.className = 'streak-confetti';
+      const color = colors[i % colors.length];
+      const angle = (Math.random() * 2 - 1) * Math.PI * spec.spread;
+      const speed = 8 + Math.random() * 12;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed - 8; // bias upward
+      const size = 6 + Math.random() * 10;
+      const rot = (Math.random() - 0.5) * 720;
+      const dur = 1.6 + Math.random() * 1.0;
+      const drift = (Math.random() - 0.5) * 80;
+      p.style.cssText = [
+        `left:${cx}px`,
+        `top:${cy}px`,
+        `width:${size}px`,
+        `height:${size * (0.5 + Math.random() * 0.5)}px`,
+        `background:${color}`,
+        `--vx:${vx * 14}px`,
+        `--vy:${vy * 14}px`,
+        `--rot:${rot}deg`,
+        `--drift:${drift}px`,
+        `animation-duration:${dur}s`,
+        `animation-delay:${Math.random() * 0.2}s`,
+      ].join(';');
+      container.appendChild(p);
+    }
+    setTimeout(() => { if (container.parentNode) container.parentNode.removeChild(container); }, 3000);
+  }
+
+  _onDailyGoalReached() {
+    showToast(`🎯 ${this.tr.streakGoalReached}`, { type: 'success', duration: 2500 });
+  }
+
+  /**
+   * Build a small "streak pill" HTML snippet used in the discover header.
+   * Returns '' if the streak is 0 (don't show empty pill on day 1).
+   */
+  _renderStreakPill() {
+    const data = this.streak.getData();
+    if (!data.current) return '';
+    const today = this.streak.getTodayProgress();
+    const pct = Math.round(today.percent * 100);
+    const isRest = today.rested;
+    return `
+      <div class="streak-pill-wrapper">
+        <button class="streak-pill${isRest ? ' streak-rested' : ''}" data-action="open-streak" title="${isRest ? this.tr.streakSkipToday : 'Streak: ' + data.current}">
+          <span class="streak-flame">${isRest ? '😴' : '🔥'}</span>
+          <span class="streak-num">${data.current}</span>
+          <span class="streak-progress" style="--sp-pct:${pct}%"></span>
+        </button>
+        <div class="streak-pill-dropdown" data-streak-dropdown>
+          <button class="streak-dropdown-item" data-action="view-top5">
+            ⭐ ${this.tr.dailyTop5}
+          </button>
+          ${!isRest ? `<button class="streak-dropdown-item" data-action="rest-today">😴 ${this.tr.streakSkipToday}</button>` : `<span class="streak-dropdown-item streak-dropdown-rested">✅ ${this.tr.streakSkipToday}</span>`}
+        </div>
+      </div>`;
+  }
+
+  /**
+   * Live-update the streak pill's progress bar without re-rendering the
+   * whole discover view. Wired to `streak.onStreakUpdated` so the bar
+   * ticks up on every swipe during a session.
+   */
+  _updateStreakPill() {
+    // Cache the pill node reference so rapid-fire swipes don't re-query
+    // the DOM on every call.
+    if (!this._streakPillNode || !this._streakPillNode.isConnected) {
+      this._streakPillNode = document.querySelector('.streak-pill');
+    }
+    if (!this._streakPillNode) return;
+    const progressEl = this._streakPillNode.querySelector('.streak-progress');
+    const numEl = this._streakPillNode.querySelector('.streak-num');
+    if (!progressEl || !numEl) return;
+    const data = this.streak.getData();
+    const today = this.streak.getTodayProgress();
+    progressEl.style.setProperty('--sp-pct', `${Math.round(today.percent * 100)}%`);
+    if (numEl.textContent !== String(data.current)) {
+      numEl.textContent = String(data.current);
+    }
+  }
+
+  /**
+   * After "Rest today" is tapped, swap the pill to rested state
+   * without a full re-render. Swaps flame to 😴, dims the pill,
+   * and replaces the dropdown action with a checked indicator.
+   */
+  _updateStreakPillRest() {
+    if (!this._streakPillNode || !this._streakPillNode.isConnected) {
+      this._streakPillNode = document.querySelector('.streak-pill');
+    }
+    if (!this._streakPillNode) return;
+    this._streakPillNode.classList.add('streak-rested');
+    const flame = this._streakPillNode.querySelector('.streak-flame');
+    if (flame) flame.textContent = '😴';
+    // Replace the Rest Today button with a checked indicator
+    const wrapper = this._streakPillNode.closest('.streak-pill-wrapper');
+    if (wrapper) {
+      const restBtn = wrapper.querySelector('[data-action="rest-today"]');
+      if (restBtn) {
+        const checked = document.createElement('span');
+        checked.className = 'streak-dropdown-item streak-dropdown-rested';
+        checked.textContent = `✅ ${this.tr.streakSkipToday}`;
+        restBtn.replaceWith(checked);
+      }
+    }
+  }
+
   // ===== VIEW ROUTING =====
   _navHTML(active) {
-    return `<nav class="bottom-nav">
+    return `      <nav class="bottom-nav">
       <button class="nav-btn${active==='discover'?' active':''}" data-view="discover">🔍 ${this.tr.discover}</button>
+      <button class="nav-btn${active==='dailyTop5'?' active':''}" data-view="dailyTop5">⭐</button>
       <button class="nav-btn${active==='daylist'?' active':''}" data-view="daylist">📋 ${this.lang === 'de' ? 'Heute' : 'Today'}</button>
-      <button class="nav-btn${active==='watchlist'?' active':''}" data-view="watchlist">📝 ${this.watchlist.length}</button>
+      <button class="nav-btn${active==='library'?' active':''}" data-view="library">📚 ${(this.watchlist?.length || 0) + (this.consumed?.length || 0)}</button>
       <button class="nav-btn${active==='history'?' active':''}" data-view="history">📖</button>
       <button class="nav-btn${active==='taste'?' active':''}" data-view="taste">🧬</button>
       <button class="nav-btn${active==='stats'?' active':''}" data-view="stats">📊</button>
@@ -3414,11 +2999,20 @@ class App {
       daylistOverlay.classList.remove('open');
       setTimeout(() => daylistOverlay.remove(), 300);
     }
+    // Tear down card-stack cleanup (swipe-active class, chrome handle, hover
+    // previews) when leaving the discover view. Without this, the
+    // chrome-handle button would leak across view changes.
+    if (view !== 'discover' && this._cardCleanupFns) {
+      this._cardCleanupFns.forEach(fn => fn());
+      this._cardCleanupFns = [];
+    }
     if (view === 'watchlist') return this.renderWatchlist(app);
+    if (view === 'library') return this.renderLibrary(app); // LIB-003: combined Want-to + Consumed
     if (view === 'history') return this.renderHistory(app);
     if (view === 'stats') return this.renderStats(app);
     if (view === 'taste') return this._renderTasteProfile(app);
     if (view === 'daylist') return this._showDaylist(app);
+    if (view === 'dailyTop5') return this._showDailyTop5(app);
     this.renderDiscover(app);
   }
 
@@ -4007,4 +3601,5 @@ class App {
 
 export { App };
 
+Object.assign(App.prototype, OnboardingMixin, GameUIMixin, ModalsMixin);
 window.app = new App();

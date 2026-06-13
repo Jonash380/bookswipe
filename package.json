@@ -11,6 +11,7 @@
   },
   "homepage": "https://github.com/Jonash380/bookswipe#readme",
   "devDependencies": {
+    "@bubblewrap/cli": "^1.24.1",
     "@playwright/test": "^1.60.0",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^17.4.4"

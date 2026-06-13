@@ -135,7 +135,7 @@ def _get_igdb_token():
             return None
 
 # SSRF whitelist
-_OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find)/')
+_OK_TMDB = re.compile(r'^/(movie|tv|person|discover|search|genre|find|trending|top_rated)/')
 _OL_BASE = 'https://openlibrary.org'
 _OK_TRAKT = re.compile(r'^(movies|shows|search|users)/')
 _GBOOKS_PARAMS = {'q', 'maxResults', 'langRestrict', 'printType', 'orderBy', 'startIndex'}
@@ -205,6 +205,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if p.startswith('/proxy/igdb/'):    return self._igdb_post(p[12:])
         if p.startswith('/proxy/party/'):   return self._party_post(p[13:])
         if p.startswith('/proxy/ai/'):      return self._ai_post(p[10:])
+        if p.startswith('/proxy/anilist/'): return self._anilist_post()
         self._json({'error': 'Method not allowed'}, 405)
 
     def _tmdb(self, path):
@@ -352,6 +353,50 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             elif direction == 'left':
                 party['results'][item_id]['nopes'] = party['results'][item_id].get('nopes', 0) + 1
         return self._json({'ok': True})
+
+    # ---- AniList GraphQL proxy ----
+    def _anilist_post(self):
+        """Proxy GraphQL queries to AniList (https://graphql.anilist.co).
+        No auth needed for public queries; rate limit ~90 req/min per IP.
+        Cache aggressively since anime/manga catalogs are stable."""
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 30000:
+            return self._json({'error': 'Body too large', 'status': 400}, 400)
+        try:
+            body = self.rfile.read(content_length).decode('utf-8', errors='replace')
+            payload = json.loads(body)
+        except Exception:
+            return self._json({'error': 'Invalid JSON body', 'status': 400}, 400)
+
+        # Validate it's a GraphQL query/payload
+        if not isinstance(payload, dict) or 'query' not in payload:
+            return self._json({'error': 'Missing GraphQL query', 'status': 400}, 400)
+
+        # Build a stable cache key from the payload
+        cache_key = f'anilist:{json.dumps(payload, sort_keys=True)}'
+        cached = _cache.get(cache_key, 3600)  # 1 hour — anime/manga catalog is stable
+        if cached is not None:
+            return self._json(cached)
+
+        try:
+            req = urllib.request.Request(
+                'https://graphql.anilist.co',
+                data=json.dumps(payload).encode(),
+                method='POST',
+            )
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('Accept', 'application/json')
+            req.add_header('User-Agent', 'BookSwipe/3.0')
+            with urllib.request.urlopen(req, timeout=12) as r:
+                data = json.loads(r.read())
+                _cache.set(cache_key, data)
+                return self._json(data)
+        except urllib.error.HTTPError as e:
+            log.warning('AniList HTTP %d', e.code)
+            return self._json({'error': f'AniList HTTP {e.code}', 'status': e.code}, e.code)
+        except Exception as e:
+            log.warning('AniList error: %s', e)
+            return self._json({'error': str(e), 'status': 500}, 500)
 
     # ---- AI Concierge endpoint ----
     def _ai_post(self, path):
@@ -671,8 +716,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "default-src 'self'; "
             "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https://image.tmdb.org https://*.googleusercontent.com https://*.steamstatic.com https://*.igdb.com https://books.google.com https://covers.openlibrary.org; "
-            "connect-src 'self' https://api.themoviedb.org https://api.trakt.tv https://api.igdb.com https://id.twitch.tv https://store.steampowered.com https://api.steampowered.com https://openlibrary.org https://www.googleapis.com https://api.openai.com; "
+            "img-src 'self' data: https://image.tmdb.org https://*.googleusercontent.com https://*.steamstatic.com https://*.igdb.com https://books.google.com https://covers.openlibrary.org https://s4.anilist.co https://img.anili.st; "
+            "connect-src 'self' https://api.themoviedb.org https://api.trakt.tv https://api.igdb.com https://id.twitch.tv https://store.steampowered.com https://api.steampowered.com https://openlibrary.org https://www.googleapis.com https://api.openai.com https://graphql.anilist.co; "
             "font-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "

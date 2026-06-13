@@ -1,0 +1,16 @@
+2026-06-13 10:55:55,722 WARNING TRAKT_API_KEY not set - Trakt proxy will return 503
+2026-06-13 10:55:55,723 WARNING TWITCH_CLIENT_ID not set - IGDB proxy will return 503
+2026-06-13 10:55:55,724 INFO BookSwipe v3 starting on http://127.0.0.1:3000
+Traceback (most recent call last):
+  File "/home/jonas/Documents/bookswipe/server.py", line 756, in <module>
+    httpd = ThreadedHTTP((BIND, PORT), Handler)
+  File "/usr/lib/python3.13/socketserver.py", line 457, in __init__
+    self.server_bind()
+    ~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/http/server.py", line 136, in server_bind
+    socketserver.TCPServer.server_bind(self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/socketserver.py", line 478, in server_bind
+    self.socket.bind(self.server_address)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 98] Address already in use

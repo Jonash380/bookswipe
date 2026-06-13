@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BookSwipe Library — High-Fidelity Mockup</title>
+<style>
+  /* ============================================================
+     APPLE TV DESIGN TOKENS (matches css/styles.css)
+     ============================================================ */
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #12121c;
+    --bg3: #1c1c28;
+    --bg4: #26263a;
+    --fg: #ffffff;
+    --fg2: #c7c7d4;
+    --fg3: #8e8ea0;
+    --card-border: rgba(255, 255, 255, 0.08);
+    --card-bg: rgba(255, 255, 255, 0.04);
+    --accent: #0a84ff;     /* Apple blue */
+    --accent2: #5ac8fa;    /* Apple sky */
+    --accent3: #4ecdc4;    /* teal */
+    --accent4: #ff9f0a;    /* gold */
+    --success: #30d158;    /* Apple green */
+    --danger: #ff453a;     /* Apple red */
+    --rating-yellow: #FFD60A; /* Apple yellow */
+    --ease-bounce: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+                 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.5;
+    font-weight: 500;             /* Apple TV: 500 = secondary body text baseline */
+    letter-spacing: -0.01em;      /* Apple TV: body text default */
+    font-variant-numeric: tabular-nums;  /* Apple TV: prevents digit shift in numbers */
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ----- APPLE TV TYPOGRAPHY OVERRIDES (matches css/styles.css convention) -----
+     Hierarchy: weight 500 body (default above) → 600 labels → 700 numeric/emphasis → 800 display
+     Letter-spacing: -.02em display, -.01em body (default), 0 numerics, .06em UPPERCASE
+     ---------------------------------------------------------------------- */
+  h1, h2, h3, h4, h5, h6, strong {
+    font-weight: 700;             /* titles default to 700 (700-800 for display) */
+    letter-spacing: -0.01em;
+  }
+  button, input, select, textarea {
+    font-family: inherit;
+    font-weight: 600;             /* buttons default to 600 */
+    letter-spacing: -0.01em;
+  }
+  .text-uppercase, [data-uppercase],
+  .recent-section h4, .proto-section h2, .device-label {
+    letter-spacing: 0.06em;       /* UPPERCASE text needs positive tracking */
+  }
+  .numeric, .count, .match-badge, .nav-badge, .star-num {
+    letter-spacing: 0;            /* numerics use default tracking */
+  }
+
+  /* ============================================================
+     PROTOTYPE NAVIGATION
+     ============================================================ */
+  .proto-nav {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: rgba(10, 10, 15, 0.95);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--card-border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  .proto-nav h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .proto-nav h1 span { color: var(--accent); }
+  .proto-nav a {
+    color: var(--fg2);
+    text-decoration: none;
+    white-space: nowrap;
+    padding: 4px 10px;
+    border-radius: 8px;
+    transition: all 0.2s var(--ease-bounce);
+  }
+  .proto-nav a:hover {
+    background: var(--card-bg);
+    color: var(--fg);
+  }
+
+  /* ============================================================
+     SECTION WRAPPERS
+     ============================================================ */
+  .proto-section {
+    padding: 48px 24px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  .proto-section + .proto-section {
+    border-top: 1px solid var(--card-border);
+  }
+  .proto-section h2 {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg3);
+    margin-bottom: 8px;
+  }
+  .proto-section h3 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .proto-section p.subtitle {
+    color: var(--fg2);
+    font-size: 0.9rem;
+    margin-bottom: 28px;
+    max-width: 600px;
+  }
+
+  /* ============================================================
+     PHONE FRAME (for the main views)
+     ============================================================ */
+  .phone-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .phone-frame {
+    width: 390px;
+    height: 844px;
+    background: var(--bg);
+    border-radius: 44px;
+    border: 8px solid #2a2a35;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+    position: relative;
+  }
+  .phone-notch {
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 120px; height: 28px;
+    background: #000;
+    border-radius: 0 0 18px 18px;
+    z-index: 100;
+  }
+  .phone-screen {
+    width: 100%; height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .phone-screen::-webkit-scrollbar { display: none; }
+  .phone-caption {
+    color: var(--fg3);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-align: center;
+  }
+
+  /* Side-by-side phones */
+  .phones-row {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* ============================================================
+     LIBRARY PAGE — COMMON
+     ============================================================ */
+  .lib-page { padding-bottom: 90px; }
+
+  .lib-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 56px 20px 16px;
+  }
+  .lib-header h1 {
+    font-size: 1.3rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .back-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+
+  .status-tabs {
+    display: flex;
+    gap: 24px;
+    padding: 0 20px 12px;
+    border-bottom: 1px solid var(--card-border);
+    position: relative;
+  }
+  .status-tab {
+    padding: 10px 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--fg3);
+    background: none;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s;
+  }
+  .status-tab.active {
+    color: var(--fg);
+  }
+  .status-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px; left: 0; right: 0;
+    height: 2.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(10, 132, 255, 0.5);
+  }
+  .status-tab .count {
+    margin-left: 4px;
+    color: var(--fg3);
+    font-weight: 500;
+  }
+  .status-tab.active .count { color: var(--fg2); }
+
+  .media-type-chips {
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .media-type-chips::-webkit-scrollbar { display: none; }
+  .mt-chip {
+    padding: 7px 16px;
+    border-radius: 20px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--fg2);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.25s var(--ease-bounce);
+  }
+  .mt-chip.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    box-shadow: 0 2px 12px rgba(10, 132, 255, 0.3);
+  }
+
+  /* ============================================================
+     CARDS
+     ============================================================ */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 8px 20px 16px;
+  }
+  .card {
+    position: relative;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: all 0.3s var(--ease-bounce);
+    cursor: pointer;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(10, 132, 255, 0.3);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .card-cover {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    background-size: cover;
+    background-position: center;
+    background-color: var(--bg3);
+    position: relative;
+  }
+  .card-cover::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 50%;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.6));
+  }
+  .card-info {
+    padding: 10px 12px 12px;
+  }
+  .card-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-meta {
+    font-size: 0.7rem;
+    color: var(--fg3);
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .card-genres {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .genre-chip {
+    font-size: 0.65rem;
+    padding: 2px 7px;
+    background: rgba(10, 132, 255, 0.12);
+    border: 1px solid rgba(10, 132, 255, 0.2);
+    color: var(--accent2);
+    border-radius: 8px;
+    font-weight: 600;
+  }
+
+  /* Status badge (top-left) */
+  .status-badge {
+    position: absolute;
+    top: 8px; left: 8px;
+    z-index: 3;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #fff;
+    border-radius: 12px;
+    padding: 0 8px;
+    height: 24px;
+    min-width: 28px;
+  }
+  .status-badge.want {
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    font-size: 0.8rem;
+    padding: 0;
+  }
+  .status-badge .star {
+    color: var(--rating-yellow);
+  }
+  .status-badge .star.low { color: var(--danger); }
+  .status-badge .star.high { color: var(--rating-yellow); }
+
+  /* Kebab button (top-right) */
+  .kebab-btn {
+    position: absolute;
+    top: 8px; right: 8px;
+    z-index: 3;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.25s var(--ease-bounce);
+  }
+  .kebab-btn:hover {
+    transform: scale(1.08);
+    border-color: rgba(10, 132, 255, 0.4);
+    box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.12);
+  }
+
+  /* Match-score badge (existing) */
+  .match-badge {
+    position: absolute;
+    bottom: 8px; right: 8px;
+    z-index: 2;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    color: var(--success);
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(48, 209, 88, 0.3);
+  }
+
+  /* Placeholder covers (use gradients) */
+  .cover-dune {
+    background: linear-gradient(135deg, #d4a574 0%, #8b4513 50%, #2c1810 100%);
+  }
+  .cover-severance {
+    background: linear-gradient(135deg, #4a5d7e 0%, #1a2332 50%, #0d1117 100%);
+  }
+  .cover-hades {
+    background: linear-gradient(135deg, #ff6b35 0%, #c1272d 50%, #1a0a0a 100%);
+  }
+  .cover-bladerunner {
+    background: linear-gradient(135deg, #f0a500 0%, #c44536 50%, #1a1a2e 100%);
+  }
+  .cover-breakingbad {
+    background: linear-gradient(135deg, #2d5a3d 0%, #1a3a2a 50%, #0a1a0a 100%);
+  }
+  .cover-sapiens {
+    background: linear-gradient(135deg, #d4a574 0%, #8b6f47 50%, #3e2723 100%);
+  }
+  .cover-outerwilds {
+    background: linear-gradient(135deg, #ff8c42 0%, #d4a574 50%, #1a1a2e 100%);
+  }
+  .cover-bladerunner2049 {
+    background: linear-gradient(135deg, #ff6b9d 0%, #c44569 50%, #1a0a1e 100%);
+  }
+
+  /* ============================================================
+     STICKY BOTTOM CTA
+     ============================================================ */
+  .bottom-cta {
+    position: sticky;
+    bottom: 0;
+    padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, transparent, var(--bg) 30%);
+  }
+  .add-consumed-btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(10, 132, 255, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .add-consumed-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 24px rgba(10, 132, 255, 0.5);
+  }
+
+  /* ============================================================
+     BOTTOM NAV (simplified for prototype)
+     ============================================================ */
+  .bottom-nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(18, 18, 30, 0.92);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+    display: flex;
+    justify-content: center;
+    z-index: 50;
+  }
+  .nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 8px 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: none;
+    border: none;
+    color: var(--fg3);
+    cursor: pointer;
+    position: relative;
+  }
+  .nav-btn.active {
+    color: var(--accent);
+  }
+  .nav-btn.active::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    transform: translateX(-50%) scaleX(1);
+    width: 20px;
+    height: 2.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(10, 132, 255, 0.5);
+  }
+  .nav-icon { font-size: 1.3rem; line-height: 1; }
+  .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 16px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    background: linear-gradient(135deg, var(--danger), #ff6b6b);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(255, 69, 58, 0.4);
+  }
+
+  /* ============================================================
+     MODAL OVERLAYS
+     ============================================================ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  .modal {
+    width: 100%;
+    max-width: 480px;
+    background: rgba(10, 10, 15, 0.92);
+    border-radius: 20px 20px 0 0;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: none;
+    box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .modal-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .modal-close {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .search-input-row {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .search-input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1.5px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--fg);
+    font-size: 0.9rem;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.25s var(--ease-out);
+  }
+  .search-input:focus {
+    border-color: var(--accent);
+    background: rgba(10, 132, 255, 0.06);
+    box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.15);
+  }
+
+  .recent-section {
+    padding: 16px 20px 8px;
+  }
+  .recent-section h4 {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg3);
+    margin-bottom: 10px;
+  }
+  .recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .recent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: var(--fg2);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .recent-item:hover {
+    background: var(--card-bg);
+  }
+
+  .quick-promote-row {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 0 20px 20px;
+    scrollbar-width: none;
+  }
+  .quick-promote-row::-webkit-scrollbar { display: none; }
+  .quick-tile {
+    flex: 0 0 80px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .quick-tile-cover {
+    width: 80px;
+    height: 110px;
+    border-radius: 8px;
+    background-size: cover;
+    background-position: center;
+    margin-bottom: 4px;
+    border: 1px solid var(--card-border);
+  }
+  .quick-tile-title {
+    font-size: 0.7rem;
+    color: var(--fg2);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .search-result {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--card-border);
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .search-result:hover {
+    background: rgba(10, 132, 255, 0.06);
+  }
+  .sr-cover {
+    width: 44px;
+    height: 60px;
+    border-radius: 6px;
+    background-size: cover;
+    background-position: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  .sr-info { flex: 1; min-width: 0; }
+  .sr-info strong {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+  .sr-meta {
+    font-size: 0.7rem;
+    color: var(--fg3);
+    font-weight: 500;
+    margin-top: 1px;
+  }
+  .mark-btn {
+    padding: 8px 14px;
+    border-radius: 20px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3);
+  }
+
+  /* Rating selector */
+  .rating-selector {
+    padding: 20px;
+    text-align: center;
+  }
+  .rating-cover {
+    width: 90px;
+    height: 130px;
+    border-radius: 10px;
+    background-size: cover;
+    background-position: center;
+    margin: 0 auto 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+  .rating-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .rating-meta {
+    font-size: 0.8rem;
+    color: var(--fg3);
+    font-weight: 500;
+    margin-bottom: 20px;
+  }
+  .rating-prompt {
+    font-size: 0.85rem;
+    color: var(--fg2);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .stars {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 24px;
+  }
+  .star {
+    font-size: 2rem;
+    color: var(--bg4);
+    cursor: pointer;
+    transition: all 0.15s var(--ease-bounce);
+    line-height: 1;
+  }
+  .star.filled {
+    color: var(--rating-yellow);
+    transform: scale(1.05);
+  }
+  .star-numbers {
+    display: flex;
+    justify-content: space-between;
+    max-width: 200px;
+    margin: 0 auto 24px;
+    padding: 0 2px;
+  }
+  .star-num {
+    font-size: 0.65rem;
+    color: var(--fg3);
+    font-weight: 500;
+    width: 2rem;
+    text-align: center;
+  }
+  .rating-cta {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(10, 132, 255, 0.4);
+    margin-bottom: 8px;
+  }
+  .rating-cancel {
+    width: 100%;
+    padding: 12px;
+    background: none;
+    border: none;
+    color: var(--fg3);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* ============================================================
+     KEBAB POPOVER
+     ============================================================ */
+  .popover {
+    position: absolute;
+    top: 40px;
+    right: 8px;
+    z-index: 50;
+    background: rgba(20, 20, 28, 0.98);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 6px;
+    min-width: 180px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  }
+  .popover-action {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: none;
+    border: none;
+    color: var(--fg);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .popover-action:hover { background: var(--card-bg); }
+  .popover-action.primary { color: var(--accent2); }
+  .popover-action.destructive { color: var(--danger); }
+
+  /* ============================================================
+     EMPTY STATES
+     ============================================================ */
+  .empty-illustration {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 32px;
+    min-height: 360px;
+    text-align: center;
+  }
+  .empty-emoji {
+    font-size: 4rem;
+    margin-bottom: 16px;
+    filter: drop-shadow(0 4px 24px rgba(10, 132, 255, 0.4));
+    line-height: 1;
+  }
+  .empty-emoji.small { font-size: 3rem; }
+  .empty-headline {
+    font-size: 1.2rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 10px;
+  }
+  .empty-subtext {
+    font-size: 0.88rem;
+    color: var(--fg2);
+    line-height: 1.5;
+    max-width: 300px;
+    margin-bottom: 24px;
+  }
+  .empty-cta-row {
+    display: flex;
+    gap: 10px;
+  }
+  .empty-btn {
+    padding: 11px 20px;
+    border-radius: 22px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1.5px solid;
+    transition: all 0.25s var(--ease-bounce);
+  }
+  .empty-btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 2px 12px rgba(10, 132, 255, 0.3);
+  }
+  .empty-btn.secondary {
+    background: var(--card-bg);
+    color: var(--fg);
+    border-color: var(--card-border);
+  }
+  .empty-btn:hover { transform: translateY(-1px); }
+
+  /* ============================================================
+     DATA EXPORT SECTION
+     ============================================================ */
+  .data-section {
+    padding: 24px 20px;
+    border-top: 1px solid var(--card-border);
+    margin-top: 20px;
+  }
+  .data-section h3 {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--fg2);
+    margin-bottom: 4px;
+  }
+  .data-section .privacy-note {
+    font-size: 0.7rem;
+    color: var(--fg3);
+    margin-bottom: 14px;
+    line-height: 1.4;
+  }
+  .data-btns {
+    display: flex;
+    gap: 8px;
+  }
+  .data-btn {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--fg);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .data-btn:hover {
+    background: rgba(10, 132, 255, 0.08);
+    border-color: rgba(10, 132, 255, 0.3);
+  }
+
+  /* ============================================================
+     DETAIL CLOSE-UP (for badge section)
+     ============================================================ */
+  .detail-card-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 40px;
+  }
+  .detail-card {
+    width: 260px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+  }
+  .detail-card .cover {
+    height: 360px;
+    background: linear-gradient(135deg, #d4a574 0%, #8b4513 50%, #2c1810 100%);
+    background-size: cover;
+    background-position: center;
+  }
+  .detail-card .info {
+    padding: 14px;
+  }
+  .detail-card .title {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .detail-card .meta {
+    font-size: 0.75rem;
+    color: var(--fg3);
+    margin-bottom: 8px;
+  }
+  .detail-card .chips {
+    display: flex;
+    gap: 4px;
+  }
+
+  /* Annotation arrows for the close-up */
+  .annotation {
+    position: absolute;
+    font-size: 0.7rem;
+    color: var(--fg3);
+    background: var(--bg2);
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--card-border);
+    font-weight: 600;
+  }
+
+  /* ============================================================
+     MISC
+     ============================================================ */
+  .device-label {
+    text-align: center;
+    color: var(--fg3);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-top: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .section-divider {
+    height: 1px;
+    background: var(--card-border);
+    margin: 32px 0;
+  }
+
+  .intro {
+    background: linear-gradient(180deg, rgba(10, 132, 255, 0.1), transparent);
+    padding: 64px 24px;
+    text-align: center;
+  }
+  .intro h1 {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, var(--fg) 0%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .intro p {
+    color: var(--fg2);
+    font-size: 1rem;
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+  }
+  .intro .meta {
+    margin-top: 24px;
+    font-size: 0.8rem;
+    color: var(--fg3);
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .intro .meta span {
+    background: var(--card-bg);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--card-border);
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     PROTOTYPE NAV
+     ============================================================ -->
+<nav class="proto-nav">
+  <h1>BookSwipe <span>Library</span></h1>
+  <a href="#want-to">1. Want to</a>
+  <a href="#consumed">2. Consumed</a>
+  <a href="#add-modal-search">3a. Add Modal — Search</a>
+  <a href="#add-modal-rating">3b. Add Modal — Rating</a>
+  <a href="#closeup">4. Card close-up</a>
+  <a href="#kebab">5. Kebab popover</a>
+  <a href="#empty">6. Empty states</a>
+  <a href="#mobile">7. Mobile</a>
+</nav>
+
+<!-- ============================================================
+     INTRO
+     ============================================================ -->
+<div class="intro">
+  <h1>Library — High-Fidelity Mockup</h1>
+  <p>Visual reference for implementers. All colors, spacing, and components
+     match the existing BookSwipe design system. Open this file in a browser
+     to see the rendered designs.</p>
+  <div class="meta">
+    <span>📐 390 × 844 iPhone frame</span>
+    <span>🎨 Apple TV palette</span>
+    <span>🌗 Dark theme</span>
+    <span>📚 library-spec.md source of truth</span>
+  </div>
+</div>
+
+<!-- ============================================================
+     1. WANT TO TAB (default view)
+     ============================================================ -->
+<section class="proto-section" id="want-to">
+  <h2>View 1 of 7</h2>
+  <h3>Library — Want to tab (default)</h3>
+  <p class="subtitle">Status tabs at the top, media-type chips below, 2-col card grid (mobile shown), sticky CTA at the bottom, bottom nav with the new "Library" label and total count.</p>
+
+  <div class="phone-wrap">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="lib-page">
+          <div class="lib-header">
+            <button class="back-btn">←</button>
+            <h1>Library</h1>
+            <div style="width:36px"></div>
+          </div>
+
+          <div class="status-tabs">
+            <button class="status-tab active">Want to <span class="count">(12)</span></button>
+            <button class="status-tab">Consumed <span class="count">(30)</span></button>
+          </div>
+
+          <div class="media-type-chips">
+            <button class="mt-chip active">All</button>
+            <button class="mt-chip">Books</button>
+            <button class="mt-chip">Movies/TV</button>
+            <button class="mt-chip">Games</button>
+          </div>
+
+          <div class="card-grid">
+            <div class="card">
+              <div class="card-cover cover-dune">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">87%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Dune</div>
+                <div class="card-meta">2021 · Film</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Sci-Fi</span>
+                  <span class="genre-chip">🏜️ Adventure</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-severance">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">92%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Severance</div>
+                <div class="card-meta">2022 · Serie</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🎭 Drama</span>
+                  <span class="genre-chip">🔍 Mystery</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-hades">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Hades</div>
+                <div class="card-meta">2020 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">⚔️ Action</span>
+                  <span class="genre-chip">🏛️ RPG</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-sapiens">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">78%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Project Hail Mary</div>
+                <div class="card-meta">2021 · Book</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Sci-Fi</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-outerwilds">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Outer Wilds</div>
+                <div class="card-meta">2019 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Adventure</span>
+                  <span class="genre-chip">🔭 Mystery</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-bladerunner2049">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">65%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Blade Runner 2049</div>
+                <div class="card-meta">2017 · Film</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Sci-Fi</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-cta">
+            <button class="add-consumed-btn">+ Add as consumed</button>
+          </div>
+        </div>
+
+        <nav class="bottom-nav">
+          <button class="nav-btn">🔍<span>Discover</span></button>
+          <button class="nav-btn">⭐<span>Today</span></button>
+          <button class="nav-btn active">📋<span>Library</span><span class="nav-badge">42</span></button>
+          <button class="nav-btn">📖<span>History</span></button>
+          <button class="nav-btn">🧬<span>Taste</span></button>
+        </nav>
+      </div>
+    </div>
+    <p class="phone-caption">📱 iPhone 14 Pro — 390×844<br>2-col card grid, side-by-side tabs</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     2. CONSUMED TAB
+     ============================================================ -->
+<section class="proto-section" id="consumed">
+  <h2>View 2 of 7</h2>
+  <h3>Library — Consumed tab</h3>
+  <p class="subtitle">Same layout, but status badges are now "⭐ N" (yellow for 4-5, red for 1-2). Steam playtime note appears for games with steamAppId (e.g., "Disco Elysium — 45h on Steam").</p>
+
+  <div class="phone-wrap">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="lib-page">
+          <div class="lib-header">
+            <button class="back-btn">←</button>
+            <h1>Library</h1>
+            <div style="width:36px"></div>
+          </div>
+
+          <div class="status-tabs">
+            <button class="status-tab">Want to <span class="count">(12)</span></button>
+            <button class="status-tab active">Consumed <span class="count">(30)</span></button>
+          </div>
+
+          <div class="media-type-chips">
+            <button class="mt-chip active">All</button>
+            <button class="mt-chip">Books</button>
+            <button class="mt-chip">Movies/TV</button>
+            <button class="mt-chip">Games</button>
+          </div>
+
+          <div class="card-grid">
+            <div class="card">
+              <div class="card-cover cover-breakingbad">
+                <div class="status-badge"><span class="star high">★</span>5</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Breaking Bad</div>
+                <div class="card-meta">2008–2013 · Serie</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🔪 Crime</span>
+                  <span class="genre-chip">🎭 Drama</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-sapiens">
+                <div class="status-badge"><span class="star high">★</span>4</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Sapiens</div>
+                <div class="card-meta">2011 · Book</div>
+                <div class="card-genres">
+                  <span class="genre-chip">📚 Non-Fiction</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-outerwilds">
+                <div class="status-badge"><span class="star high">★</span>3</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Outer Wilds</div>
+                <div class="card-meta">2019 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Adventure</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-hades" style="position:relative;">
+                <div class="status-badge"><span class="star high">★</span>5</div>
+                <button class="kebab-btn">⋮</button>
+                <div style="position:absolute;bottom:8px;left:8px;z-index:2;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);padding:3px 8px;border-radius:10px;font-size:0.65rem;color:var(--accent2);font-weight:600;border:1px solid rgba(102,192,244,0.2);">
+                  🎮 45h on Steam
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Disco Elysium</div>
+                <div class="card-meta">2019 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🕵️ RPG</span>
+                  <span class="genre-chip">🔍 Detective</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-bladerunner">
+                <div class="status-badge"><span class="star low">★</span>1</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">50 Shades of Grey</div>
+                <div class="card-meta">2011 · Book</div>
+                <div class="card-genres">
+                  <span class="genre-chip">💕 Romance</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-bladerunner2049">
+                <div class="status-badge"><span class="star high">★</span>4</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Returnal</div>
+                <div class="card-meta">2021 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">⚔️ Action</span>
+                  <span class="genre-chip">🏛️ Roguelike</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-cta">
+            <button class="add-consumed-btn">+ Add as consumed</button>
+          </div>
+        </div>
+
+        <nav class="bottom-nav">
+          <button class="nav-btn">🔍<span>Discover</span></button>
+          <button class="nav-btn">⭐<span>Today</span></button>
+          <button class="nav-btn active">📋<span>Library</span><span class="nav-badge">42</span></button>
+          <button class="nav-btn">📖<span>History</span></button>
+          <button class="nav-btn">🧬<span>Taste</span></button>
+        </nav>
+      </div>
+    </div>
+    <p class="phone-caption">📱 iPhone 14 Pro — 390×844<br>⭐ badges with rating, optional Steam playtime</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     3a. ADD CONSUMED MODAL — SEARCH STATE
+     ============================================================ -->
+<section class="proto-section" id="add-modal-search">
+  <h2>View 3a of 7</h2>
+  <h3>Add Consumed modal — Search state</h3>
+  <p class="subtitle">Opened from the Library page's "+ Add consumed" button. Shows recent searches (from localStorage) and a quick-promote row of watchlist thumbnails (tap to open the rating modal directly).</p>
+
+  <div class="phone-wrap">
+    <div class="phone-frame" style="background:transparent;border:none;box-shadow:none;">
+      <div class="phone-screen">
+        <div class="modal-overlay">
+          <div class="modal" style="margin-top:80px;">
+            <div class="modal-header">
+              <div class="modal-title">Mark as consumed</div>
+              <button class="modal-close">✕</button>
+            </div>
+
+            <div class="search-input-row">
+              <input
+                type="text"
+                class="search-input"
+                placeholder="🔍 Search title..."
+                value="blade runne"
+                autofocus
+              >
+            </div>
+
+            <div class="recent-section">
+              <h4>Recent searches</h4>
+              <div class="recent-list">
+                <div class="recent-item">↩ Breaking Bad</div>
+                <div class="recent-item">↩ The Wire</div>
+                <div class="recent-item">↩ Dune</div>
+                <div class="recent-item">↩ Severance</div>
+                <div class="recent-item">↩ Disco Elysium</div>
+              </div>
+            </div>
+
+            <div class="recent-section">
+              <h4>Or pick from your Want to list</h4>
+            </div>
+
+            <div class="quick-promote-row">
+              <div class="quick-tile">
+                <div class="quick-tile-cover cover-severance"></div>
+                <div class="quick-tile-title">Severance</div>
+              </div>
+              <div class="quick-tile">
+                <div class="quick-tile-cover cover-sapiens"></div>
+                <div class="quick-tile-title">Project H…</div>
+              </div>
+              <div class="quick-tile">
+                <div class="quick-tile-cover cover-hades"></div>
+                <div class="quick-tile-title">Hades</div>
+              </div>
+              <div class="quick-tile">
+                <div class="quick-tile-cover cover-outerwilds"></div>
+                <div class="quick-tile-title">Outer Wilds</div>
+              </div>
+              <div class="quick-tile">
+                <div class="quick-tile-cover cover-bladerunner"></div>
+                <div class="quick-tile-title">Blade Runner</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="phone-caption">Modal slides up from bottom<br>Recent searches + quick-promote from Want to</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     3b. ADD CONSUMED MODAL — RATING STATE
+     ============================================================ -->
+<section class="proto-section" id="add-modal-rating">
+  <h2>View 3b of 7</h2>
+  <h3>Add Consumed modal — Rating state</h3>
+  <p class="subtitle">After tapping a result, the modal transitions to the rating selector. 5 large stars, hover/fill states, primary CTA shows the current rating. CTA is disabled until 1+ stars are selected.</p>
+
+  <div class="phone-wrap">
+    <div class="phone-frame" style="background:transparent;border:none;box-shadow:none;">
+      <div class="phone-screen">
+        <div class="modal-overlay">
+          <div class="modal" style="margin-top:140px;">
+            <div class="modal-header">
+              <div class="modal-title">Mark as consumed</div>
+              <button class="modal-close">✕</button>
+            </div>
+
+            <div class="rating-selector">
+              <div class="rating-cover cover-bladerunner"></div>
+              <div class="rating-title">Blade Runner</div>
+              <div class="rating-meta">1982 · Film</div>
+
+              <div class="rating-prompt">How did you like it?</div>
+
+              <div class="stars">
+                <span class="star filled">★</span>
+                <span class="star filled">★</span>
+                <span class="star filled">★</span>
+                <span class="star filled">★</span>
+                <span class="star">★</span>
+              </div>
+
+              <div class="star-numbers">
+                <div class="star-num">1</div>
+                <div class="star-num">2</div>
+                <div class="star-num">3</div>
+                <div class="star-num">4</div>
+                <div class="star-num">5</div>
+              </div>
+
+              <button class="rating-cta">
+                ✓ Mark as consumed (4 stars)
+              </button>
+              <button class="rating-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="phone-caption">Default: 4 stars (75% of users rate 4-5)<br>CTA disabled until rating selected</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     4. CARD CLOSE-UP (badges + kebab)
+     ============================================================ -->
+<section class="proto-section" id="closeup">
+  <h2>View 4 of 7</h2>
+  <h3>Card close-up — status badge &amp; kebab</h3>
+  <p class="subtitle">Top-left corner = status badge (📝 Want to, or ⭐ N Consumed). Top-right corner = kebab button (always visible in Library page only). Existing match-score badge stays in the bottom-right of the cover.</p>
+
+  <div class="detail-card-wrap">
+    <div class="detail-card">
+      <div class="cover" style="position:relative;">
+        <div class="status-badge want">📝</div>
+        <button class="kebab-btn">⋮</button>
+        <div class="match-badge">87%</div>
+      </div>
+      <div class="info">
+        <div class="title">Dune</div>
+        <div class="meta">2021 · Film</div>
+        <div class="chips">
+          <span class="genre-chip">🚀 Sci-Fi</span>
+          <span class="genre-chip">🏜️ Adventure</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <h3 style="font-size:1.1rem;margin-bottom:20px;text-align:center;">Side-by-side: Want to badge (📝) vs Consumed badge (⭐ N)</h3>
+
+  <div style="display:flex;gap:32px;justify-content:center;flex-wrap:wrap;">
+    <div style="text-align:center;">
+      <div class="detail-card" style="width:200px;">
+        <div class="cover cover-severance" style="height:280px;position:relative;">
+          <div class="status-badge want">📝</div>
+        </div>
+        <div class="info">
+          <div class="title">Want to badge</div>
+          <div class="meta">28×28 circle · 📝 emoji</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <div class="detail-card" style="width:200px;">
+        <div class="cover cover-breakingbad" style="height:280px;position:relative;">
+          <div class="status-badge"><span class="star high">★</span>5</div>
+        </div>
+        <div class="info">
+          <div class="title">Consumed badge</div>
+          <div class="meta">24px tall pill · ⭐ + rating</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <div class="detail-card" style="width:200px;">
+        <div class="cover cover-bladerunner" style="height:280px;position:relative;">
+          <div class="status-badge"><span class="star low">★</span>1</div>
+        </div>
+        <div class="info">
+          <div class="title">Consumed (1⭐)</div>
+          <div class="meta">Star in red (#FF453A)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     5. KEBAB POPOVER
+     ============================================================ -->
+<section class="proto-section" id="kebab">
+  <h2>View 5 of 7</h2>
+  <h3>Kebab popover (open state)</h3>
+  <p class="subtitle">Tap the ⋮ button to open a viewport-aware popover. Three actions per status: a primary action (Promote / Update rating), a secondary action (Open detail), and a destructive action (Remove). Closes on click-outside, Escape, or action selection.</p>
+
+  <div class="phones-row">
+    <!-- Want to variant -->
+    <div class="phone-wrap">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div style="padding:80px 20px 0;">
+            <div class="card" style="max-width:340px;margin:0 auto;">
+              <div class="card-cover cover-dune" style="aspect-ratio: 16/9;position:relative;">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn" style="top:80px;">⋮</button>
+                <div class="popover">
+                  <button class="popover-action primary">I finished this →</button>
+                  <button class="popover-action">Open detail</button>
+                  <button class="popover-action destructive">Remove from Want to</button>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Dune</div>
+                <div class="card-meta">2021 · Film</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="phone-caption">Want to variant: Promote / Open / Remove</p>
+    </div>
+
+    <!-- Consumed variant -->
+    <div class="phone-wrap">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div style="padding:80px 20px 0;">
+            <div class="card" style="max-width:340px;margin:0 auto;">
+              <div class="card-cover cover-breakingbad" style="aspect-ratio: 16/9;position:relative;">
+                <div class="status-badge"><span class="star high">★</span>5</div>
+                <button class="kebab-btn" style="top:80px;">⋮</button>
+                <div class="popover">
+                  <button class="popover-action primary">Update rating</button>
+                  <button class="popover-action">Open detail</button>
+                  <button class="popover-action destructive">Remove from library</button>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Breaking Bad</div>
+                <div class="card-meta">2008–2013 · Serie</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="phone-caption">Consumed variant: Update rating / Open / Remove</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     6. EMPTY STATES
+     ============================================================ -->
+<section class="proto-section" id="empty">
+  <h2>View 6 of 7</h2>
+  <h3>Empty states (3 variants)</h3>
+  <p class="subtitle">Each empty state has a large emoji, a one-line headline, a 1-2 sentence subtext, and 1-2 CTA buttons. Dark/light mode aware via CSS variables.</p>
+
+  <div class="phones-row">
+    <!-- Both empty (first time) -->
+    <div class="phone-wrap">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div class="lib-page">
+            <div class="lib-header">
+              <button class="back-btn">←</button>
+              <h1>Library</h1>
+              <div style="width:36px"></div>
+            </div>
+            <div class="status-tabs">
+              <button class="status-tab active">Want to <span class="count">(0)</span></button>
+              <button class="status-tab">Consumed <span class="count">(0)</span></button>
+            </div>
+            <div class="media-type-chips">
+              <button class="mt-chip active">All</button>
+              <button class="mt-chip">Books</button>
+              <button class="mt-chip">Movies/TV</button>
+              <button class="mt-chip">Games</button>
+            </div>
+
+            <div class="empty-illustration">
+              <div class="empty-emoji">💫</div>
+              <div class="empty-headline">Your library is empty</div>
+              <div class="empty-subtext">Add what you've enjoyed and save what you want to try — both feed your recommendations.</div>
+              <div class="empty-cta-row">
+                <button class="empty-btn secondary">+ Add consumed</button>
+                <button class="empty-btn primary">Start swiping →</button>
+              </div>
+            </div>
+          </div>
+
+          <nav class="bottom-nav">
+            <button class="nav-btn">🔍<span>Discover</span></button>
+            <button class="nav-btn">⭐<span>Today</span></button>
+            <button class="nav-btn active">📋<span>Library</span><span class="nav-badge">0</span></button>
+            <button class="nav-btn">📖<span>History</span></button>
+            <button class="nav-btn">🧬<span>Taste</span></button>
+          </nav>
+        </div>
+      </div>
+      <p class="phone-caption">6a. Both empty (first time)<br>💫 + 2 CTAs</p>
+    </div>
+
+    <!-- Want to empty, Consumed has items -->
+    <div class="phone-wrap">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div class="lib-page">
+            <div class="lib-header">
+              <button class="back-btn">←</button>
+              <h1>Library</h1>
+              <div style="width:36px"></div>
+            </div>
+            <div class="status-tabs">
+              <button class="status-tab active">Want to <span class="count">(0)</span></button>
+              <button class="status-tab">Consumed <span class="count">(30)</span></button>
+            </div>
+            <div class="media-type-chips">
+              <button class="mt-chip active">All</button>
+              <button class="mt-chip">Books</button>
+              <button class="mt-chip">Movies/TV</button>
+              <button class="mt-chip">Games</button>
+            </div>
+
+            <div class="empty-illustration">
+              <div class="empty-emoji small">📝</div>
+              <div class="empty-headline">Nothing saved yet</div>
+              <div class="empty-subtext">Swipe right on things you like, and they'll show up here.</div>
+              <div class="empty-cta-row">
+                <button class="empty-btn primary">Start swiping →</button>
+              </div>
+            </div>
+          </div>
+
+          <nav class="bottom-nav">
+            <button class="nav-btn">🔍<span>Discover</span></button>
+            <button class="nav-btn">⭐<span>Today</span></button>
+            <button class="nav-btn active">📋<span>Library</span><span class="nav-badge">30</span></button>
+            <button class="nav-btn">📖<span>History</span></button>
+            <button class="nav-btn">🧬<span>Taste</span></button>
+          </nav>
+        </div>
+      </div>
+      <p class="phone-caption">6b. Want to empty only<br>📝 + 1 CTA</p>
+    </div>
+
+    <!-- Consumed empty, Want to has items -->
+    <div class="phone-wrap">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen">
+          <div class="lib-page">
+            <div class="lib-header">
+              <button class="back-btn">←</button>
+              <h1>Library</h1>
+              <div style="width:36px"></div>
+            </div>
+            <div class="status-tabs">
+              <button class="status-tab">Want to <span class="count">(12)</span></button>
+              <button class="status-tab active">Consumed <span class="count">(0)</span></button>
+            </div>
+            <div class="media-type-chips">
+              <button class="mt-chip active">All</button>
+              <button class="mt-chip">Books</button>
+              <button class="mt-chip">Movies/TV</button>
+              <button class="mt-chip">Games</button>
+            </div>
+
+            <div class="empty-illustration">
+              <div class="empty-emoji small">🎬</div>
+              <div class="empty-headline">No consumed items yet</div>
+              <div class="empty-subtext">Add what you've already read or watched to teach the app your taste.</div>
+              <div class="empty-cta-row">
+                <button class="empty-btn primary">+ Add consumed</button>
+              </div>
+            </div>
+          </div>
+
+          <nav class="bottom-nav">
+            <button class="nav-btn">🔍<span>Discover</span></button>
+            <button class="nav-btn">⭐<span>Today</span></button>
+            <button class="nav-btn active">📋<span>Library</span><span class="nav-badge">12</span></button>
+            <button class="nav-btn">📖<span>History</span></button>
+            <button class="nav-btn">🧬<span>Taste</span></button>
+          </nav>
+        </div>
+      </div>
+      <p class="phone-caption">6c. Consumed empty only<br>🎬 + 1 CTA</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     7. MOBILE
+     ============================================================ -->
+<section class="proto-section" id="mobile">
+  <h2>View 7 of 7</h2>
+  <h3>Mobile layout (375px viewport)</h3>
+  <p class="subtitle">Same Library page, but on a smaller viewport: 1-column card grid (was 2-col), full-width sticky CTA, bottom nav icons only (text labels hidden below 480px).</p>
+
+  <div class="phone-wrap">
+    <div class="phone-frame" style="width:375px;height:812px;">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="lib-page">
+          <div class="lib-header">
+            <button class="back-btn">←</button>
+            <h1>Library</h1>
+            <div style="width:36px"></div>
+          </div>
+
+          <div class="status-tabs">
+            <button class="status-tab active">Want to <span class="count">(12)</span></button>
+            <button class="status-tab">Consumed <span class="count">(30)</span></button>
+          </div>
+
+          <div class="media-type-chips">
+            <button class="mt-chip active">All</button>
+            <button class="mt-chip">Books</button>
+            <button class="mt-chip">Movies/TV</button>
+            <button class="mt-chip">Games</button>
+          </div>
+
+          <div style="padding:8px 20px 16px;display:flex;flex-direction:column;gap:12px;">
+            <div class="card">
+              <div class="card-cover cover-dune" style="aspect-ratio: 16/9;position:relative;">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">87%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Dune</div>
+                <div class="card-meta">2021 · Film</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🚀 Sci-Fi</span>
+                  <span class="genre-chip">🏜️ Adventure</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-severance" style="aspect-ratio: 16/9;position:relative;">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+                <div class="match-badge">92%</div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Severance</div>
+                <div class="card-meta">2022 · Serie</div>
+                <div class="card-genres">
+                  <span class="genre-chip">🎭 Drama</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-cover cover-hades" style="aspect-ratio: 16/9;position:relative;">
+                <div class="status-badge want">📝</div>
+                <button class="kebab-btn">⋮</button>
+              </div>
+              <div class="card-info">
+                <div class="card-title">Hades</div>
+                <div class="card-meta">2020 · Game</div>
+                <div class="card-genres">
+                  <span class="genre-chip">⚔️ Action</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-cta">
+            <button class="add-consumed-btn">+ Add as consumed</button>
+          </div>
+        </div>
+
+        <nav class="bottom-nav">
+          <button class="nav-btn"><span class="nav-icon">🔍</span></button>
+          <button class="nav-btn"><span class="nav-icon">⭐</span></button>
+          <button class="nav-btn active"><span class="nav-icon">📋</span><span class="nav-badge">42</span></button>
+          <button class="nav-btn"><span class="nav-icon">📖</span></button>
+          <button class="nav-btn"><span class="nav-icon">🧬</span></button>
+        </nav>
+      </div>
+    </div>
+    <p class="phone-caption">📱 iPhone SE — 375×812<br>1-col grid, full-width CTA, icons-only nav</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     FOOTER
+     ============================================================ -->
+<section class="proto-section" style="text-align:center;border-top:1px solid var(--card-border);">
+  <h2 style="color:var(--accent);">End of mockup</h2>
+  <h3>📚 Library feature — design complete</h3>
+  <p class="subtitle" style="margin:0 auto 16px;">
+    This HTML file is self-contained and can be opened in any browser.
+    Source of truth: <code style="background:var(--bg3);padding:2px 8px;border-radius:4px;">library-spec.md</code>
+  </p>
+  <p style="color:var(--fg3);font-size:0.8rem;">
+    All colors, spacing, and components match the existing BookSwipe design system.<br>
+    Next step: implement LIB-001 (storage) and LIB-009 (i18n) to unblock everything else.
+  </p>
+</section>
+
+</body>
+</html>

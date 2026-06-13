@@ -1017,6 +1017,425 @@ describe('Recommender', () => {
       assert.equal(first, second);
     });
   });
+
+  // ================================================================
+  // UPDATE FROM CONSUMED (Library page signal weighting)
+  // ================================================================
+
+  describe('updateFromConsumed — rating-modulated profile updates', () => {
+    it('should reject invalid ratings (0, 6, non-integer, NaN, null, undefined)', () => {
+      rec.updateFromConsumed(makeItem('x'), 0);
+      rec.updateFromConsumed(makeItem('x'), 6);
+      rec.updateFromConsumed(makeItem('x'), 3.5);
+      rec.updateFromConsumed(makeItem('x'), NaN);
+      rec.updateFromConsumed(makeItem('x'), null);
+      rec.updateFromConsumed(makeItem('x'), undefined);
+      rec.updateFromConsumed(makeItem('x'), '5');
+      // None of these should bump totalSwipes
+      assert.equal(rec.profile.totalSwipes, 0);
+    });
+
+    it('should be a no-op when item is null', () => {
+      rec.updateFromConsumed(null, 5);
+      assert.equal(rec.profile.totalSwipes, 0);
+    });
+
+    it('should increment totalSwipes regardless of rating value', () => {
+      rec.updateFromConsumed(makeItem('a'), 5);
+      assert.equal(rec.profile.totalSwipes, 1);
+      rec.updateFromConsumed(makeItem('b'), 3);
+      assert.equal(rec.profile.totalSwipes, 2);
+      rec.updateFromConsumed(makeItem('c'), 1);
+      assert.equal(rec.profile.totalSwipes, 3);
+    });
+
+    it('should apply 1.5x negative weight to genres for 1-2 star ratings', () => {
+      rec.profile.totalSwipes = 19; // pin for determinism: after increment = 20, confidence=1, baseDelta=1
+      const item = makeItem('disliked', { genres: [28] }); // Action
+      rec.updateFromConsumed(item, 1);
+      // finalDelta = 1 * -1.5 = -1.5; after _applyDecay (0.95) = -1.425
+      assert.ok(rec.profile.genreWeights.Action < 0, 'Action weight should be negative');
+      assert.ok(rec.profile.genreWeights.Action < -1.4, 'Action weight should be heavily negative');
+      assert.ok(rec.profile.genreWeights.Action > -1.5, 'Action weight should be within expected range');
+    });
+
+    it('should apply 1.5x negative weight for 2 stars too', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('disliked', { genres: [28] });
+      rec.updateFromConsumed(item, 2);
+      assert.ok(rec.profile.genreWeights.Action < -1.4);
+      assert.ok(rec.profile.genreWeights.Action > -1.5);
+    });
+
+    it('should apply 0 weight (neutral) for 3 stars — no entity updates', () => {
+      const item = makeItem('meh', { genres: [28], tags: ['dark'] });
+      rec.updateFromConsumed(item, 3);
+      // 3 stars = neutral — no genre/tag/trope updates
+      assert.equal(rec.profile.genreWeights.Action, undefined);
+      assert.equal(rec.profile.tagWeights.dark, undefined);
+    });
+
+    it('should apply 1.2x positive weight to genres for 4 star ratings', () => {
+      rec.profile.totalSwipes = 19; // after increment = 20, baseDelta = 1, × 1.2 = 1.2
+      const item = makeItem('liked', { genres: [28] });
+      rec.updateFromConsumed(item, 4);
+      // After _applyDecay (0.95): 1.2 * 0.95 = 1.14
+      assert.ok(rec.profile.genreWeights.Action > 1.1, `expected > 1.1, got ${rec.profile.genreWeights.Action}`);
+      assert.ok(rec.profile.genreWeights.Action < 1.2, `expected < 1.2, got ${rec.profile.genreWeights.Action}`);
+    });
+
+    it('should apply 1.5x positive weight to genres for 5 star ratings', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('loved', { genres: [28] });
+      rec.updateFromConsumed(item, 5);
+      // finalDelta = 1 * 1.5 = 1.5; after decay = 1.425
+      assert.ok(rec.profile.genreWeights.Action > 1.4, `expected > 1.4, got ${rec.profile.genreWeights.Action}`);
+      assert.ok(rec.profile.genreWeights.Action < 1.5, `expected < 1.5, got ${rec.profile.genreWeights.Action}`);
+    });
+
+    it('5-star weight should be greater than 4-star weight (5 > 4)', () => {
+      const a = new Recommender(makeMockApp());
+      resetProfile(a);
+      a.profile.totalSwipes = 19;
+      const b = new Recommender(makeMockApp());
+      resetProfile(b);
+      b.profile.totalSwipes = 19;
+      a.updateFromConsumed(makeItem('x', { genres: [28] }), 4);
+      b.updateFromConsumed(makeItem('x', { genres: [28] }), 5);
+      // 4★: 1.2 * 0.95 ≈ 1.14, 5★: 1.5 * 0.95 ≈ 1.425
+      assert.ok(b.profile.genreWeights.Action > a.profile.genreWeights.Action);
+    });
+
+    it('should update tags from consumed items (mood signal)', () => {
+      const item = makeItem('loved', { genres: [], tags: ['cozy', 'wholesome'] });
+      rec.updateFromConsumed(item, 5);
+      assert.ok(rec.profile.tagWeights.cozy > 0);
+      assert.ok(rec.profile.tagWeights.wholesome > 0);
+    });
+
+    it('should update DNA tropes for consumed items', () => {
+      const item = makeItem('loved', {
+        genres: [],
+        mediaDNA: { tropes: ['found_family'], pacing: [], aesthetic: [], warnings: [] },
+      });
+      rec.updateFromConsumed(item, 5);
+      assert.ok(rec.profile.tropes.found_family > 0);
+    });
+
+    it('should update pacing styles for consumed items', () => {
+      const item = makeItem('loved', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: ['slow_burn'], aesthetic: [], warnings: [] },
+      });
+      rec.updateFromConsumed(item, 4);
+      assert.ok(rec.profile.pacingStyles.slow_burn > 0);
+    });
+
+    it('should update aesthetics for consumed items', () => {
+      const item = makeItem('loved', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: [], aesthetic: ['neon_noir'], warnings: [] },
+      });
+      rec.updateFromConsumed(item, 5);
+      assert.ok(rec.profile.aesthetics.neon_noir > 0);
+    });
+
+    it('should add to warnings for 1-2 star ratings (negative signal)', () => {
+      const item = makeItem('hated', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: ['gore'] },
+      });
+      rec.updateFromConsumed(item, 1);
+      assert.equal(rec.profile.warnings.gore, 1, '1-star should add 1 to warning weight');
+    });
+
+    it('should NOT add to warnings for 4-5 star ratings (positive signal)', () => {
+      const item = makeItem('loved', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: ['gore'] },
+      });
+      rec.updateFromConsumed(item, 5);
+      assert.equal(rec.profile.warnings.gore, undefined, '5-star should not add to warnings');
+    });
+
+    it('should clear the score cache after update (forces re-score)', () => {
+      const item = makeItem('cached', { genres: [28] });
+      app.state.selectedGenres = [28];
+      // Prime the cache
+      rec.score(item);
+      assert.ok(rec.cache.has('cached'));
+      rec.updateFromConsumed(item, 5);
+      assert.equal(rec.cache.has('cached'), false, 'cache should be cleared after update');
+    });
+
+    it('should save the profile to localStorage', () => {
+      rec.updateFromConsumed(makeItem('x', { genres: [28] }), 5);
+      const stored = JSON.parse(storageMock.getItem('bs-rec-profile'));
+      assert.ok(stored.genreWeights.Action > 0);
+    });
+
+    it('should apply larger updates early on (adaptive learning rate)', () => {
+      const a = new Recommender(makeMockApp());
+      resetProfile(a);
+      a.profile.totalSwipes = 0;
+      a.updateFromConsumed(makeItem('x', { genres: [28] }), 5);
+      const earlyWeight = a.profile.genreWeights.Action;
+
+      const b = new Recommender(makeMockApp());
+      resetProfile(b);
+      b.profile.totalSwipes = 20;
+      b.updateFromConsumed(makeItem('x', { genres: [28] }), 5);
+      const lateWeight = b.profile.genreWeights.Action;
+
+      assert.ok(earlyWeight > lateWeight, `early ${earlyWeight} should > late ${lateWeight}`);
+    });
+
+    it('should update game-specific weights for game items (consumed 5 stars)', () => {
+      const item = makeItem('loved-game', {
+        type: 'game', source: 'igdb',
+        genres: [{ id: 2, name: 'Action' }],
+        platforms: [{ id: 6, name: 'PC (Steam)' }],
+        mechanics: ['open_world'],
+        themes: ['fantasy'],
+        steamTags: ['Exploration', 'Atmospheric'],
+      });
+      rec.updateFromConsumed(item, 5);
+      assert.ok(rec.profile.gameMechanicWeights.open_world > 0);
+      assert.ok(rec.profile.gameThemeWeights.fantasy > 0);
+      assert.ok(rec.profile.steamTagWeights.Exploration > 0);
+    });
+
+    it('should integrate with score() — a 5-star consumed DNA signal should boost future matches', () => {
+      rec.profile.totalSwipes = 19;
+      // Consume an item with a 'revenge' trope at 5 stars — adds to profile.tropes.revenge
+      rec.updateFromConsumed(makeItem('a', {
+        genres: [],
+        mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] },
+      }), 5);
+      assert.ok(rec.profile.tropes.revenge > 0);
+      // Now score a baseline vs an item that shares the DNA signal
+      // (score() reads profile.tropes via W.trope = 10)
+      rec.profile.totalSwipes = 20;
+      const baseline = rec.score(makeItem('baseline'));
+      const matchesDNA = rec.score(makeItem('dna', {
+        mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] },
+      }));
+      assert.ok(matchesDNA > baseline, `expected matchesDNA (${matchesDNA}) > baseline (${baseline}) after 5★ consumed DNA signal`);
+    });
+  });
+
+  // ================================================================
+  // REMOVE FROM CONSUMED (inverse of updateFromConsumed)
+  // ================================================================
+
+  describe('removeFromConsumed — targeted taste-vector invalidation', () => {
+    it('should be a no-op when item is null', () => {
+      rec.removeFromConsumed(null, 5);
+      assert.equal(rec.profile.totalSwipes, 0);
+    });
+
+    it('should reject invalid ratings (0, 6, non-integer, NaN, null, undefined, string)', () => {
+      rec.profile.totalSwipes = 5;
+      rec.removeFromConsumed(makeItem('x'), 0);
+      rec.removeFromConsumed(makeItem('x'), 6);
+      rec.removeFromConsumed(makeItem('x'), 3.5);
+      rec.removeFromConsumed(makeItem('x'), NaN);
+      rec.removeFromConsumed(makeItem('x'), null);
+      rec.removeFromConsumed(makeItem('x'), undefined);
+      rec.removeFromConsumed(makeItem('x'), '5');
+      // None of these should decrement totalSwipes
+      assert.equal(rec.profile.totalSwipes, 5);
+    });
+
+    it('should reject items without an id (stale state defense)', () => {
+      rec.profile.totalSwipes = 5;
+      rec.removeFromConsumed({}, 5);
+      rec.removeFromConsumed({ title: 'no-id' }, 5);
+      rec.removeFromConsumed(null, 5);
+      assert.equal(rec.profile.totalSwipes, 5, 'no decrement for items without id');
+    });
+
+    it('should decrement totalSwipes (reverse of updateFromConsumed)', () => {
+      rec.updateFromConsumed(makeItem('a'), 5);
+      assert.equal(rec.profile.totalSwipes, 1);
+      rec.removeFromConsumed(makeItem('a'), 5);
+      assert.equal(rec.profile.totalSwipes, 0);
+    });
+
+    it('should NOT decrement totalSwipes below 0', () => {
+      rec.profile.totalSwipes = 0;
+      rec.removeFromConsumed(makeItem('a'), 5);
+      assert.equal(rec.profile.totalSwipes, 0);
+    });
+
+    it('should reverse a 5-star consumed signal exactly (genre weight returns to ~0)', () => {
+      rec.profile.totalSwipes = 19; // post-update = 20, baseDelta = 1
+      const item = makeItem('loved', { genres: [28] });
+      rec.updateFromConsumed(item, 5);
+      const afterAdd = rec.profile.genreWeights.Action;
+      assert.ok(afterAdd > 1.4, `after-add weight should be ~1.43, got ${afterAdd}`);
+      rec.removeFromConsumed(item, 5);
+      const afterRemove = rec.profile.genreWeights.Action;
+      // Was +1.5, now reverses with -1.5 (slightly different baseDelta due to
+      // totalSwipes being decremented first, but very close to symmetric)
+      assert.ok(Math.abs(afterRemove) < 0.1, `after-remove weight should be ~0, got ${afterRemove}`);
+    });
+
+    it('should reverse a 1-star consumed signal (negative → positive back to ~0)', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('hated', { genres: [28] });
+      rec.updateFromConsumed(item, 1);
+      const afterAdd = rec.profile.genreWeights.Action;
+      assert.ok(afterAdd < -1.4, `1★ should produce strongly negative weight, got ${afterAdd}`);
+      rec.removeFromConsumed(item, 1);
+      const afterRemove = rec.profile.genreWeights.Action;
+      assert.ok(Math.abs(afterRemove) < 0.1, `after-remove weight should be ~0, got ${afterRemove}`);
+    });
+
+    it('should reverse a 4-star consumed signal (smaller magnitude than 5-star)', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('liked', { genres: [28] });
+      rec.updateFromConsumed(item, 4);
+      const afterAdd = rec.profile.genreWeights.Action;
+      assert.ok(afterAdd > 1.0, `4★ should produce positive weight, got ${afterAdd}`);
+      rec.removeFromConsumed(item, 4);
+      const afterRemove = rec.profile.genreWeights.Action;
+      assert.ok(Math.abs(afterRemove) < 0.1, `after-remove weight should be ~0, got ${afterRemove}`);
+    });
+
+    it('should reverse a 3-star consumed signal (no-op for entity weights, but totalSwipes decrements)', () => {
+      const item = makeItem('meh', { genres: [28], tags: ['dark'] });
+      rec.updateFromConsumed(item, 3);
+      assert.equal(rec.profile.totalSwipes, 1);
+      // 3★ is neutral, so no entity weights were set
+      assert.equal(rec.profile.genreWeights.Action, undefined);
+      assert.equal(rec.profile.tagWeights.dark, undefined);
+      rec.removeFromConsumed(item, 3);
+      assert.equal(rec.profile.totalSwipes, 0);
+      // Still no weights (removeFromConsumed of a 3★ is also a no-op for weights)
+      assert.equal(rec.profile.genreWeights.Action, undefined);
+      assert.equal(rec.profile.tagWeights.dark, undefined);
+    });
+
+    it('should reverse a negative signal on a 1-star item (item disliked → neutral)', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('hated', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: ['gore'] },
+      });
+      rec.updateFromConsumed(item, 1);
+      assert.equal(rec.profile.warnings.gore, 1, '1★ should add to warnings');
+      rec.removeFromConsumed(item, 1);
+      // The remove should reverse the warning increment (1-2★ adds 1 to each
+      // warning; remove subtracts 1). _updateEntityWeights only ADDS to warnings
+      // on negative deltas, so removeFromConsumed must explicitly subtract.
+      assert.equal(rec.profile.warnings.gore, 0,
+        'warnings should be back to 0 after removing a 1★ item');
+    });
+
+    it('should not push warnings below 0 (Math.max clamp)', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('hated', {
+        genres: [],
+        mediaDNA: { tropes: [], pacing: [], aesthetic: [], warnings: ['gore'] },
+      });
+      rec.updateFromConsumed(item, 1);
+      assert.equal(rec.profile.warnings.gore, 1);
+      rec.removeFromConsumed(item, 1);
+      assert.equal(rec.profile.warnings.gore, 0);
+      // Calling remove again on a non-existent entry shouldn't go negative
+      rec.removeFromConsumed(item, 1);
+      assert.equal(rec.profile.warnings.gore, 0, 'warnings should not go negative');
+    });
+
+    it('should clear the score cache after removal (forces re-score)', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('cached', { genres: [28] });
+      app.state.selectedGenres = [28];
+      rec.updateFromConsumed(item, 5);
+      // Prime the cache
+      rec.score(makeItem('other', { genres: [] }));
+      assert.ok(rec.cache.size > 0);
+      rec.removeFromConsumed(item, 5);
+      assert.equal(rec.cache.size, 0, 'cache should be cleared after removeFromConsumed');
+    });
+
+    it('should save the profile to localStorage after removal', () => {
+      rec.profile.totalSwipes = 19;
+      const item = makeItem('loved', { genres: [28] });
+      rec.updateFromConsumed(item, 5);
+      rec.removeFromConsumed(item, 5);
+      const stored = JSON.parse(storageMock.getItem('bs-rec-profile'));
+      assert.ok(Math.abs(stored.genreWeights.Action) < 0.1,
+        `stored Action weight should be ~0 after remove, got ${stored.genreWeights.Action}`);
+    });
+
+    it('should be the inverse of updateFromConsumed (add then remove ≈ identity)', () => {
+      // Each cycle: add then remove. Both functions call _applyDecay(), so the
+      // profile is decayed twice per cycle. The inverse-delta magnitude is
+      // now an exact match for the original (we use pre-decrement totalSwipes
+      // for confidence), but the double-decay leaves a small residual of
+      // ~(baseDelta * 0.05). We verify that residual stays within tolerance.
+      const tolerance = 0.5; // generous: covers cold-start + warm profiles
+      const items = [
+        makeItem('a', { genres: [28], tags: ['dark'], mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] } }),
+        makeItem('b', { genres: [12], tags: ['funny'], mediaDNA: { tropes: ['found_family'], pacing: ['slow_burn'], aesthetic: [], warnings: [] } }),
+        makeItem('c', { type: 'game', source: 'igdb', genres: [{ id: 2, name: 'Action' }], mechanics: ['open_world'], themes: ['fantasy'] }),
+      ];
+      for (const item of items) {
+        for (const rating of [1, 2, 3, 4, 5]) {
+          const snap = () => ({
+            genreWeights: { ...rec.profile.genreWeights },
+            tagWeights: { ...rec.profile.tagWeights },
+            tropes: { ...rec.profile.tropes },
+            pacingStyles: { ...rec.profile.pacingStyles },
+            warnings: { ...rec.profile.warnings },
+            totalSwipes: rec.profile.totalSwipes,
+          });
+          const before = snap();
+          rec.updateFromConsumed(item, rating);
+          rec.removeFromConsumed(item, rating);
+          const after = snap();
+
+          // totalSwipes must be EXACTLY back (we increment then decrement)
+          assert.equal(after.totalSwipes, before.totalSwipes,
+            `totalSwipes drift for ${item.id}@${rating}★: before=${before.totalSwipes} after=${after.totalSwipes}`);
+
+          // Weight maps should be within tolerance (allows for double-decay).
+          // Warnings is special: 1-2★ add+remove should be exact (we explicitly
+          // subtract, no _applyDecay on warnings since they're an integer counter).
+          for (const key of ['genreWeights', 'tagWeights', 'tropes', 'pacingStyles']) {
+            const allKeys = new Set([...Object.keys(before[key]), ...Object.keys(after[key])]);
+            for (const k of allKeys) {
+              const a = before[key][k] || 0;
+              const b = after[key][k] || 0;
+              if (Math.abs(a - b) > tolerance) {
+                assert.fail(`${key}.${k} drift for ${item.id}@${rating}★: before=${a} after=${b} (tolerance=${tolerance})`);
+              }
+            }
+          }
+        }
+      }
+    });
+
+    it('should integrate with score() — removing a 5-star consumed item should drop the boost', () => {
+      rec.profile.totalSwipes = 20;
+      rec.updateFromConsumed(makeItem('a', {
+        genres: [],
+        mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] },
+      }), 5);
+      assert.ok(rec.profile.tropes.revenge > 0, 'should have revenge trope weight after 5★');
+      // Now remove the consumed item — the trope weight should be effectively
+      // gone (within tolerance for the inherent double-decay of the add+remove cycle).
+      rec.removeFromConsumed(makeItem('a', {
+        genres: [],
+        mediaDNA: { tropes: ['revenge'], pacing: [], aesthetic: [], warnings: [] },
+      }), 5);
+      const residual = rec.profile.tropes.revenge || 0;
+      assert.ok(Math.abs(residual) < 0.5,
+        `revenge trope should be ~0 after removeFromConsumed(5★), got ${residual}`);
+    });
+  });
 });
 
 describe('pickWildcard — cold-start & homogeneous pool', () => {

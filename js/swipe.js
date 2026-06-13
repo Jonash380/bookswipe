@@ -111,8 +111,18 @@ export class SwipeEngine {
     const distFactor = Math.min(Math.abs(this.dx) / 100, 1);
     const rotation = (angle * 180 / Math.PI) * 0.12 * distFactor;
     const tiltX = Math.max(-12, Math.min(12, this.dy * 0.04));
+    // Motion blur: intensifies with swipe distance and velocity
+    const absVx = Math.abs(this.velocityX);
+    const blurAmount = Math.min(Math.abs(this.dx) / 40, 6) + Math.min(absVx, 12) * 0.4;
+    this.el.style.setProperty('--swipe-blur', `${blurAmount.toFixed(2)}px`);
     this.el.style.transform = `translateX(${this.dx}px) rotate(${rotation}deg) perspective(800px) rotateX(${tiltX}deg)`;
     this.el.style.opacity = Math.max(0.4, 1 - Math.abs(this.dx) / 350);
+    // Afterimage: box-shadow blur proportional to swipe speed
+    if (blurAmount > 0.5) {
+      this.el.style.boxShadow = `0 ${blurAmount * 3}px ${blurAmount * 8}px rgba(0,0,0,0.4), 0 0 ${blurAmount * 4}px rgba(255,255,255,0.1)`;
+    } else {
+      this.el.style.boxShadow = '';
+    }
 
     // Update directional CSS classes for visual feedback
     this.el.classList.remove('swiping-right', 'swiping-left', 'swiping-up');
@@ -161,9 +171,18 @@ export class SwipeEngine {
       const flyRotation = this.velocityX * 3;
       const offX = dir === 'up' ? 0 : (dir === 'right' ? window.innerWidth * 1.2 : -window.innerWidth * 1.2);
       const offY = dir === 'up' ? -window.innerHeight * 1.2 : 0;
-      this.el.style.transition = 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease';
-      this.el.style.transform = `translateX(${offX}px) translateY(${offY}px) rotate(${flyRotation}deg) scale(0.9)`;
+      // Exit animation: more dramatic fly-off with intensifying motion blur,
+      // a slight scale-down (so the card "shrinks" as it leaves), and a
+      // trailing afterimage ghost that lingers briefly behind the card.
+      // The afterimage is implemented as a fixed-position clone that fades
+      // and stretches in the opposite direction of the swipe, giving the
+      // feel of motion smear without heavy compositor work.
+      const exitBlur = Math.max(8, Math.min(20, Math.abs(this.velocityX) * 1.2));
+      this.el.style.transition = 'transform 0.42s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.32s ease, filter 0.42s ease';
+      this.el.style.transform = `translateX(${offX}px) translateY(${offY}px) rotate(${flyRotation}deg) scale(0.85)`;
       this.el.style.opacity = '0';
+      this.el.style.filter = `blur(${exitBlur}px)`;
+      this._spawnAfterimage(dir, flyRotation, exitBlur);
 
       // Trigger super-like flash
       if (dir === 'up') {
@@ -181,12 +200,60 @@ export class SwipeEngine {
       this.el.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease';
       this.el.style.transform = '';
       this.el.style.opacity = '';
+      this.el.style.boxShadow = '';
+      this.el.style.setProperty('--swipe-blur', '0px');
     }
     this.dx = 0; this.dy = 0;
     this.velocityX = 0;
     this.velocityY = 0;
     setTimeout(() => { if (this.el) this.el.style.transition = ''; }, 500);
   }
+  // ===== AFTERIMAGE GHOST =====
+  // Clones the card at its current screen position and animates a stretched,
+  // blurred ghost that follows the swipe direction. This gives the
+  // TikTok-style "motion smear" feel without relying on a heavy compositor
+  // pass. The clone is removed after its fade-out completes.
+  _spawnAfterimage(dir, flyRotation, exitBlur) {
+    if (!this.el || !this.el.getBoundingClientRect) return;
+    const rect = this.el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const ghost = this.el.cloneNode(true);
+    // Strip heavy children (iframes, videos) that would otherwise start
+    // loading and waste compositor time. The afterimage is a visual effect,
+    // not a playable surface.
+    ghost.querySelectorAll('iframe, video, audio').forEach(n => n.remove());
+    ghost.classList.add('card-afterimage');
+    // Place the ghost at the same screen position as the original.
+    ghost.style.position = 'fixed';
+    ghost.style.left = `${rect.left}px`;
+    ghost.style.top = `${rect.top}px`;
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    ghost.style.margin = '0';
+    ghost.style.transform = 'none';
+    ghost.style.filter = `blur(${Math.max(4, exitBlur * 0.6)}px)`;
+    ghost.style.opacity = '0.55';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.zIndex = '-1';
+    ghost.style.willChange = 'transform, opacity, filter';
+    // Different stretch direction per swipe: right/left smear horizontally,
+    // up swipes smear vertically.
+    const stretchX = (dir === 'right' ? 1.15 : dir === 'left' ? 1.15 : 1);
+    const stretchY = (dir === 'up' ? 1.2 : 1);
+    const driftX = dir === 'right' ? 30 : dir === 'left' ? -30 : 0;
+    const driftY = dir === 'up' ? -25 : 0;
+    ghost.style.transition = 'transform 0.55s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.5s ease, filter 0.5s ease';
+    document.body.appendChild(ghost);
+    // Force layout, then animate the ghost away.
+    requestAnimationFrame(() => {
+      ghost.style.transform = `translateX(${driftX}px) translateY(${driftY}px) scaleX(${stretchX}) scaleY(${stretchY}) rotate(${flyRotation * 0.3}deg)`;
+      ghost.style.opacity = '0';
+      ghost.style.filter = `blur(${Math.max(8, exitBlur)}px)`;
+    });
+    // Remove the ghost after the animation completes.
+    setTimeout(() => { if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost); }, 600);
+  }
+
   get isSwiping() { return this.swiping; }
   didSwipe() { return this._didSwipe; }
   destroy() {
